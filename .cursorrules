@@ -1,0 +1,16 @@
+# Библиотека храма — заметки проекта
+
+- Язык ответов и документации: русский.
+- Стек: Free Pascal + Lazarus, без сторонних компонентов и СУБД.
+- Данные: собственные бинарные `.dat`, индексы `.idx`, безопасная атомарная запись.
+- Удаление только логическое; связи только через внутренние ID.
+- Точка входа: `LibraApp.lpr` / `Library.lpi`, ядро данных: `src/uDatabase.pas`.
+- ТЗ: `Техническое_задание_Библиотека_Храма.md`.
+- Списки (`TStringGrid`): колонка 0 — маркер активной строки `▶`; сущность в `Objects[0, Row]`; после Add/Edit — `SelectGridEntity` по ID, фокус на Col=1.
+- Глобальный размер шрифта UI: `TSettings.UIFontSize` в `Settings.dat` (NextID≥2), UI — SpinEdit на вкладке «Настройки»; применять через `Screen.SystemFont` (+ `Form.Font` и `RecalcGridRowHeights`).
+- Сборка: `lazbuild Library.lpi` → `Prog/Library.exe`, объектники в `lib/`.
+  - Конкретный путь к сборщику на этой машине: `C:\Users\Sergey\AppData\Local\lazarus\lazbuild.exe`.
+  - Команда из PowerShell (cwd проекта): `& 'C:\Users\Sergey\AppData\Local\lazarus\lazbuild.exe' 'E:\Bidlioteka\MiniMax2\Library.lpi'`
+  - **Сборка обязательна после каждой правки в проекте** — без подтверждения `Prog/Library.exe` обновлён, правка не считается завершённой.
+  - Если `Library.exe` занят (программа запущена) — закрыть её или собрать в `Library_new.exe`.
+- Карточки (`uEditDialogs`): OK без `ModalResult`; запись в `OKClick` хелпера; `ModalResult := mrOK` только при успехе — форма не закрывается после ошибки.

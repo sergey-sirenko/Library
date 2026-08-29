@@ -1,0 +1,821 @@
+object MainForm: TMainForm
+  Left = 200
+  Height = 640
+  Top = 100
+  Width = 1024
+  Caption = 'Библиотека храма'
+  ClientHeight = 640
+  ClientWidth = 1024
+  OnClose = FormClose
+  OnCreate = FormCreate
+  OnShow = FormShow
+  LCLVersion = '3.0'
+  object pcMain: TPageControl
+    Left = 0
+    Height = 616
+    Top = 0
+    Width = 1024
+    ActivePage = tsBooks
+    Align = alClient
+    TabIndex = 0
+    TabOrder = 0
+    OnChange = pcMainChange
+    object tsBooks: TTabSheet
+      Caption = 'Книги'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlBooksTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 44
+        ClientWidth = 1016
+        TabOrder = 0
+        object edtBookSearch: TPlaceholderEdit
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 200
+          TabOrder = 0
+        end
+        object edtBookSearchInv: TPlaceholderEdit
+          Left = 216
+          Height = 28
+          Top = 8
+          Width = 110
+          TabOrder = 1
+        end
+        object btnBookSearchClear: TSpeedButton
+          Left = 332
+          Height = 28
+          Top = 8
+          Width = 24
+          Caption = 'X'
+          OnClick = btnBookSearchClearClick
+        end
+        object btnBookSearch: TBitBtn
+          Left = 362
+          Height = 28
+          Top = 8
+          Width = 90
+          Caption = 'Найти'
+          OnClick = btnBookSearchClick
+          TabOrder = 2
+        end
+        object btnBookAdd: TBitBtn
+          Left = 460
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Добавить'
+          OnClick = btnBookAddClick
+          TabOrder = 3
+        end
+        object btnBookRecognize: TBitBtn
+          Left = 942
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Распознать'
+          OnClick = btnBookRecognizeClick
+          TabOrder = 7
+        end
+        object btnBookEdit: TBitBtn
+          Left = 578
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Изменить'
+          OnClick = btnBookEditClick
+          TabOrder = 4
+        end
+        object btnBookDelete: TBitBtn
+          Left = 696
+          Height = 28
+          Top = 8
+          Width = 100
+          Caption = 'Удалить'
+          OnClick = btnBookDeleteClick
+          TabOrder = 5
+        end
+        object btnBookRestore: TBitBtn
+          Left = 804
+          Height = 28
+          Top = 8
+          Width = 130
+          Caption = 'Восстановить'
+          OnClick = btnBookRestoreClick
+          TabOrder = 6
+        end
+        object chkShowDeleted: TCheckBox
+          Left = 1070
+          Height = 24
+          Top = 10
+          Width = 76
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedChange
+          TabOrder = 8
+        end
+      end
+      object gridBooks: TStringGrid
+        Left = 0
+        Height = 333
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 6
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+      object splBooksCopies: TSplitter
+        Left = 0
+        Height = 5
+        Top = 377
+        Width = 1016
+        Align = alBottom
+        MinSize = 120
+        ResizeAnchor = akBottom
+      end
+      object pnlCopiesBottom: TPanel
+        Left = 0
+        Height = 204
+        Top = 382
+        Width = 1016
+        Align = alBottom
+        BevelOuter = bvNone
+        ClientHeight = 204
+        ClientWidth = 1016
+        TabOrder = 2
+      object pnlCopiesTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        ClientHeight = 44
+        ClientWidth = 1016
+        TabOrder = 0
+        object btnCopyAdd: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 150
+          Caption = 'Добавить экз.'
+          OnClick = btnCopyAddClick
+          TabOrder = 0
+        end
+        object btnCopyEdit: TBitBtn
+          Left = 166
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Изменить'
+          OnClick = btnCopyEditClick
+          TabOrder = 1
+        end
+        object btnCopyDelete: TBitBtn
+          Left = 294
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Удалить'
+          OnClick = btnCopyDeleteClick
+          TabOrder = 2
+        end
+      end
+      object gridCopies: TStringGrid
+        Left = 0
+        Height = 160
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 5
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+      end
+    end
+    object tsReaders: TTabSheet
+      Caption = 'Читатели'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlReadersTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object edtReaderSearch: TEdit
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 190
+          TabOrder = 0
+        end
+        object btnReaderSearchClear: TSpeedButton
+          Left = 204
+          Height = 28
+          Top = 8
+          Width = 24
+          Caption = 'X'
+          OnClick = btnReaderSearchClearClick
+        end
+        object btnReaderSearch: TBitBtn
+          Left = 236
+          Height = 28
+          Top = 8
+          Width = 90
+          Caption = 'Найти'
+          OnClick = btnReaderSearchClick
+          TabOrder = 1
+        end
+        object btnReaderAdd: TBitBtn
+          Left = 336
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Добавить'
+          OnClick = btnReaderAddClick
+          TabOrder = 2
+        end
+        object btnReaderEdit: TBitBtn
+          Left = 454
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Изменить'
+          OnClick = btnReaderEditClick
+          TabOrder = 3
+        end
+        object btnReaderDelete: TBitBtn
+          Left = 572
+          Height = 28
+          Top = 8
+          Width = 100
+          Caption = 'Удалить'
+          OnClick = btnReaderDeleteClick
+          TabOrder = 4
+        end
+        object btnReaderRestore: TBitBtn
+          Left = 680
+          Height = 28
+          Top = 8
+          Width = 140
+          Caption = 'Восстановить'
+          OnClick = btnReaderRestoreClick
+          TabOrder = 5
+        end
+      end
+      object gridReaders: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 5
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+    end
+    object tsLoans: TTabSheet
+      Caption = 'Выдачи'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlLoansTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnLoanIssue: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Выдать'
+          OnClick = btnLoanIssueClick
+          TabOrder = 0
+        end
+        object btnLoanReturn: TBitBtn
+          Left = 126
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Вернуть'
+          OnClick = btnLoanReturnClick
+          TabOrder = 1
+        end
+        object btnLoanRenew: TBitBtn
+          Left = 244
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Продлить'
+          OnClick = btnLoanRenewClick
+          TabOrder = 2
+        end
+        object btnLoanDate: TBitBtn
+          Left = 372
+          Height = 28
+          Top = 8
+          Width = 190
+          Caption = 'Дата из календаря'
+          OnClick = btnLoanDateClick
+          TabOrder = 3
+        end
+        object chkLoansOnlyLoaned: TCheckBox
+          Left = 578
+          Height = 24
+          Top = 10
+          Width = 140
+          Caption = 'Только выданные'
+          OnChange = chkLoansOnlyLoanedChange
+          TabOrder = 4
+        end
+      end
+      object gridLoans: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 6
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goEditing, goColSizing, goThumbTracking]
+        TabOrder = 1
+        OnDblClick = gridLoansDblClick
+        OnEditingDone = gridLoansEditingDone
+        OnKeyDown = gridLoansKeyDown
+        OnSelectCell = gridLoansSelectCell
+        OnValidateEntry = gridLoansValidateEntry
+      end
+    end
+    object tsOverdue: TTabSheet
+      Caption = 'Просрочки'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object gridOverdue: TStringGrid
+        Left = 0
+        Height = 586
+        Top = 0
+        Width = 1016
+        Align = alClient
+        ColCount = 5
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 0
+        OnDblClick = gridOverdueDblClick
+      end
+    end
+    object tsCategories: TTabSheet
+      Caption = 'Категории'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlCatTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnCatAdd: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Добавить'
+          OnClick = btnCatAddClick
+          TabOrder = 0
+        end
+        object btnCatEdit: TBitBtn
+          Left = 136
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Изменить'
+          OnClick = btnCatEditClick
+          TabOrder = 1
+        end
+        object btnCatDelete: TBitBtn
+          Left = 264
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Удалить'
+          OnClick = btnCatDeleteClick
+          TabOrder = 2
+        end
+      end
+      object gridCategories: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 3
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+    end
+    object tsLocations: TTabSheet
+      Caption = 'Места хранения'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlLocTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnLocAdd: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Добавить'
+          OnClick = btnLocAddClick
+          TabOrder = 0
+        end
+        object btnLocEdit: TBitBtn
+          Left = 136
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Изменить'
+          OnClick = btnLocEditClick
+          TabOrder = 1
+        end
+        object btnLocDelete: TBitBtn
+          Left = 264
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Удалить'
+          OnClick = btnLocDeleteClick
+          TabOrder = 2
+        end
+      end
+      object gridLocations: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 3
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+    end
+    object tsReports: TTabSheet
+      Caption = 'Отчёты'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlReports: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object cbReport: TComboBox
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 280
+          Style = csDropDownList
+          TabOrder = 0
+        end
+        object btnReportShow: TBitBtn
+          Left = 300
+          Height = 28
+          Top = 8
+          Width = 140
+          Caption = 'Сформировать'
+          OnClick = btnReportShowClick
+          TabOrder = 1
+        end
+        object btnReportSave: TBitBtn
+          Left = 450
+          Height = 28
+          Top = 8
+          Width = 150
+          Caption = 'Сохранить CSV'
+          OnClick = btnReportSaveClick
+          TabOrder = 2
+        end
+      end
+      object gridReport: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 1
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+    end
+    object tsUsers: TTabSheet
+      Caption = 'Пользователи'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlUsersTop: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnUserAdd: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Добавить'
+          OnClick = btnUserAddClick
+          TabOrder = 0
+        end
+        object btnUserEdit: TBitBtn
+          Left = 136
+          Height = 28
+          Top = 8
+          Width = 120
+          Caption = 'Изменить'
+          OnClick = btnUserEditClick
+          TabOrder = 1
+        end
+        object btnUserDelete: TBitBtn
+          Left = 264
+          Height = 28
+          Top = 8
+          Width = 110
+          Caption = 'Удалить'
+          OnClick = btnUserDeleteClick
+          TabOrder = 2
+        end
+      end
+      object gridUsers: TStringGrid
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        ColCount = 5
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 1
+      end
+    end
+    object tsSettings: TTabSheet
+      Caption = 'Настройки'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlSettings: TPanel
+        Left = 0
+        Height = 586
+        Top = 0
+        Width = 1016
+        Align = alClient
+        BevelOuter = bvNone
+        TabOrder = 0
+        object lblLibName: TLabel
+          Left = 24
+          Height = 15
+          Top = 24
+          Width = 150
+          Caption = 'Наименование библиотеки'
+        end
+        object edtLibName: TEdit
+          Left = 24
+          Height = 28
+          Top = 44
+          Width = 400
+          TabOrder = 0
+        end
+        object lblLoanDays: TLabel
+          Left = 24
+          Height = 15
+          Top = 88
+          Width = 120
+          Caption = 'Срок выдачи (дней)'
+        end
+        object edtLoanDays: TEdit
+          Left = 24
+          Height = 28
+          Top = 108
+          Width = 120
+          TabOrder = 1
+        end
+        object lblMaxBooks: TLabel
+          Left = 24
+          Height = 15
+          Top = 152
+          Width = 200
+          Caption = 'Макс. книг на руках'
+        end
+        object edtMaxBooks: TEdit
+          Left = 24
+          Height = 28
+          Top = 172
+          Width = 120
+          TabOrder = 2
+        end
+        object lblMaxRenew: TLabel
+          Left = 24
+          Height = 15
+          Top = 216
+          Width = 180
+          Caption = 'Макс. продлений'
+        end
+        object edtMaxRenew: TEdit
+          Left = 24
+          Height = 28
+          Top = 236
+          Width = 120
+          TabOrder = 3
+        end
+        object chkAutoBackup: TCheckBox
+          Left = 24
+          Height = 24
+          Top = 284
+          Width = 280
+          Caption = 'Автоматическое еженедельное копирование'
+          TabOrder = 4
+        end
+        object lblUIFontSize: TLabel
+          Left = 24
+          Height = 15
+          Top = 328
+          Width = 160
+          Caption = 'Размер шрифта (пт)'
+        end
+        object seUIFontSize: TSpinEdit
+          Left = 24
+          Height = 28
+          Top = 348
+          Width = 120
+          MaxValue = 16
+          MinValue = 8
+          TabOrder = 5
+          Value = 9
+        end
+        object lblInventoryStart: TLabel
+          Left = 24
+          Height = 15
+          Top = 392
+          Width = 260
+          Caption = 'Начало инвентарных номеров'
+        end
+        object seInventoryStart: TSpinEdit
+          Left = 24
+          Height = 28
+          Top = 412
+          Width = 120
+          MaxValue = 9999999
+          MinValue = 1
+          TabOrder = 6
+          Value = 1
+        end
+        object lblOpenRouterModel: TLabel
+          Left = 24
+          Height = 15
+          Top = 460
+          Width = 160
+          Caption = 'Модель OpenRouter'
+        end
+        object edtOpenRouterModel: TEdit
+          Left = 24
+          Height = 28
+          Top = 480
+          Width = 400
+          TabOrder = 7
+        end
+        object btnSelectOpenRouterModel: TBitBtn
+          Left = 440
+          Height = 32
+          Top = 480
+          Width = 140
+          Caption = '...'
+          OnClick = btnSelectOpenRouterModelClick
+          TabOrder = 8
+        end
+        object lblOpenRouterApiKey: TLabel
+          Left = 24
+          Height = 15
+          Top = 524
+          Width = 180
+          Caption = 'OpenRouter API Key'
+        end
+        object edtOpenRouterApiKey: TEdit
+          Left = 24
+          Height = 28
+          Top = 544
+          Width = 400
+          PasswordChar = '*'
+          TabOrder = 9
+        end
+        object btnTestOpenRouter: TBitBtn
+          Left = 440
+          Height = 32
+          Top = 544
+          Width = 180
+          Caption = 'Тест соединения'
+          OnClick = btnTestOpenRouterClick
+          TabOrder = 10
+        end
+        object btnSaveSettings: TBitBtn
+          Left = 24
+          Height = 32
+          Top = 592
+          Width = 180
+          Caption = 'Сохранить'
+          OnClick = btnSaveSettingsClick
+          TabOrder = 11
+        end
+      end
+    end
+    object tsBackup: TTabSheet
+      Caption = 'Резервные копии'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object pnlBackup: TPanel
+        Left = 0
+        Height = 44
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnBackupNow: TBitBtn
+          Left = 8
+          Height = 28
+          Top = 8
+          Width = 180
+          Caption = 'Создать копию'
+          OnClick = btnBackupNowClick
+          TabOrder = 0
+        end
+        object btnRestoreBackup: TBitBtn
+          Left = 200
+          Height = 28
+          Top = 8
+          Width = 180
+          Caption = 'Восстановить'
+          OnClick = btnRestoreBackupClick
+          TabOrder = 1
+        end
+      end
+      object lstBackups: TListBox
+        Left = 0
+        Height = 542
+        Top = 44
+        Width = 1016
+        Align = alClient
+        TabOrder = 1
+      end
+    end
+    object tsJournal: TTabSheet
+      Caption = 'Журнал'
+      ClientHeight = 586
+      ClientWidth = 1016
+      object gridJournal: TStringGrid
+        Left = 0
+        Height = 586
+        Top = 0
+        Width = 1016
+        Align = alClient
+        ColCount = 4
+        FixedCols = 0
+        Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
+        TabOrder = 0
+      end
+    end
+  end
+  object statusBar: TStatusBar
+    Left = 0
+    Height = 24
+    Top = 616
+    Width = 1024
+    Panels = <>
+    SimplePanel = True
+  end
+end

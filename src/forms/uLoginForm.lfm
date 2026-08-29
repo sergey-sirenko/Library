@@ -1,0 +1,88 @@
+object LoginForm: TLoginForm
+  Left = 300
+  Height = 220
+  Top = 200
+  Width = 380
+  Caption = 'Вход в систему'
+  ClientHeight = 220
+  ClientWidth = 380
+  OnCreate = FormCreate
+  OnShow = FormShow
+  Position = poScreenCenter
+  LCLVersion = '3.0'
+  object pnl: TPanel
+    Left = 0
+    Height = 220
+    Top = 0
+    Width = 380
+    Align = alClient
+    BevelOuter = bvNone
+    ClientHeight = 220
+    ClientWidth = 380
+    TabOrder = 0
+    object lblTitle: TLabel
+      Left = 24
+      Height = 20
+      Top = 16
+      Width = 330
+      Alignment = taCenter
+      AutoSize = False
+      Caption = 'Библиотека храма'
+      Font.Style = [fsBold]
+      ParentFont = False
+    end
+    object lblLogin: TLabel
+      Left = 40
+      Height = 15
+      Top = 56
+      Width = 100
+      AutoSize = True
+      Caption = 'Имя пользователя'
+    end
+    object cbLogin: TComboBox
+      Left = 40
+      Height = 28
+      Top = 76
+      Width = 300
+      Style = csDropDownList
+      TabOrder = 0
+    end
+    object lblPassword: TLabel
+      Left = 40
+      Height = 15
+      Top = 112
+      Width = 47
+      AutoSize = True
+      Caption = 'Пароль'
+    end
+    object edtPassword: TEdit
+      Left = 40
+      Height = 28
+      Top = 132
+      Width = 300
+      EchoMode = emPassword
+      PasswordChar = '*'
+      TabOrder = 1
+    end
+    object btnOK: TButton
+      Left = 160
+      Height = 30
+      Top = 172
+      Width = 90
+      Caption = 'Войти'
+      Default = True
+      OnClick = btnOKClick
+      TabOrder = 2
+    end
+    object btnCancel: TButton
+      Left = 256
+      Height = 30
+      Top = 172
+      Width = 90
+      Cancel = True
+      Caption = 'Отмена'
+      ModalResult = 2
+      TabOrder = 3
+    end
+  end
+end
