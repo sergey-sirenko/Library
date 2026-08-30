@@ -17,13 +17,11 @@ type
   end;
 
   { TEdit с подсказкой-«плейсхолдером» — серый текст внутри пустого поля.
-    Рисуется через WndProc после WM_PAINT, чтобы перекрыть нативный EDIT. }
+    Использует штатный механизм TextHint Lazarus. }
   TPlaceholderEdit = class(TEdit)
   private
     FPlaceholder: string;
     procedure SetPlaceholder(const Value: string);
-  protected
-    procedure WndProc(var Message: TLMessage); override;
   published
     property Placeholder: string read FPlaceholder write SetPlaceholder;
   end;
@@ -41,6 +39,8 @@ type
     tsJournal: TTabSheet;
     tsCategories: TTabSheet;
     tsLocations: TTabSheet;
+    pnlJournalTop: TPanel;
+    btnJournalKeepMonth: TBitBtn;
     pnlBooksTop: TPanel;
     edtBookSearch: TPlaceholderEdit;
     edtBookSearchInv: TPlaceholderEdit;
@@ -167,6 +167,7 @@ type
     procedure btnLocAddClick(Sender: TObject);
     procedure btnLocEditClick(Sender: TObject);
     procedure btnLocDeleteClick(Sender: TObject);
+    procedure btnJournalKeepMonthClick(Sender: TObject);
     procedure pcMainChange(Sender: TObject);
     procedure chkShowDeletedChange(Sender: TObject);
     procedure chkLoansOnlyLoanedChange(Sender: TObject);
@@ -1156,35 +1157,7 @@ begin
   if FPlaceholder <> Value then
   begin
     FPlaceholder := Value;
-    Invalidate;
-  end;
-end;
-
-procedure TPlaceholderEdit.WndProc(var Message: TLMessage);
-var
-  DC: HDC;
-  C: TCanvas;
-begin
-  inherited WndProc(Message);
-  if (Message.Msg = LM_PAINT) and (Text = '') and not Focused and (FPlaceholder <> '') then
-  begin
-    DC := GetDC(Handle);
-    if DC <> 0 then
-    try
-      C := TCanvas.Create;
-      try
-        C.Handle := DC;
-        C.Brush.Style := bsClear;
-        C.Font.Color := clGray;
-        C.Font.Style := [fsItalic];
-        C.TextRect(ClientRect, 4, 2, FPlaceholder);
-      finally
-        C.Handle := 0;
-        C.Free;
-      end;
-    finally
-      ReleaseDC(Handle, DC);
-    end;
+    TextHint := Value;
   end;
 end;
 
@@ -2746,6 +2719,27 @@ begin
     RefreshAll;
     SelectGridEntity(gridLocations, ID, True);
   end;
+end;
+
+procedure TMainForm.btnJournalKeepMonthClick(Sender: TObject);
+var
+  Cutoff: TDateTime;
+  DeletedCount: Integer;
+  Err: string;
+begin
+  Cutoff := IncMonth(Now, -1);
+  if MessageDlg('Удалить из журнала все записи старше месяца?' + LineEnding +
+    'Останутся записи начиная с ' + FormatDateTimeRu(Cutoff) + '.',
+    mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  if not FDB.DeleteActionsBefore(Cutoff, DeletedCount, Err) then
+  begin
+    MessageDlg(Err, mtError, [mbOK], 0);
+    Exit;
+  end;
+  RefreshJournal;
+  MessageDlg('Удалено записей: ' + IntToStr(DeletedCount) + '.',
+    mtInformation, [mbOK], 0);
 end;
 
 procedure TMainForm.pcMainChange(Sender: TObject);

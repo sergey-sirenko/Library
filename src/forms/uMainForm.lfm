@@ -809,16 +809,34 @@ object MainForm: TMainForm
       Caption = 'Журнал'
       ClientHeight = 586
       ClientWidth = 1016
+      object pnlJournalTop: TPanel
+        Left = 0
+        Height = 48
+        Top = 0
+        Width = 1016
+        Align = alTop
+        BevelOuter = bvNone
+        TabOrder = 0
+        object btnJournalKeepMonth: TBitBtn
+          Left = 12
+          Height = 32
+          Top = 8
+          Width = 250
+          Caption = 'Оставить записи за месяц'
+          TabOrder = 0
+          OnClick = btnJournalKeepMonthClick
+        end
+      end
       object gridJournal: TStringGrid
         Left = 0
-        Height = 586
-        Top = 0
+        Height = 538
+        Top = 48
         Width = 1016
         Align = alClient
         ColCount = 4
         FixedCols = 0
         Options = [goFixedVertLine, goFixedHorzLine, goVertLine, goHorzLine, goColSizing, goThumbTracking]
-        TabOrder = 0
+        TabOrder = 1
       end
     end
   end

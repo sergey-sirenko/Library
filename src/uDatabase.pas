@@ -167,6 +167,8 @@ type
     procedure CollectOverdue(AOut: TList);
     function IntegrityCheck(out AError: string): Boolean;
     function CopyCover(const ASource: string; ABookID: TId): string;
+    function DeleteActionsBefore(ACutoff: TDateTime; out ADeletedCount: Integer;
+      out AError: string): Boolean;
 
     property Paths: TAppPaths read FPaths;
     property Books: TEntityList read FBooks;
@@ -1238,6 +1240,34 @@ begin
   finally
     Parts.Free;
     SL.Free;
+  end;
+end;
+
+function TLibraryDB.DeleteActionsBefore(ACutoff: TDateTime;
+  out ADeletedCount: Integer; out AError: string): Boolean;
+var
+  i: Integer;
+  A: TActionLogItem;
+begin
+  Result := False;
+  ADeletedCount := 0;
+  AError := '';
+  for i := FActions.Count - 1 downto 0 do
+  begin
+    A := TActionLogItem(FActions[i]);
+    if A.When < ACutoff then
+    begin
+      FActions.Delete(i);
+      Inc(ADeletedCount);
+    end;
+  end;
+  try
+    if ADeletedCount > 0 then
+      SaveActions;
+    Result := True;
+  except
+    on E: Exception do
+      AError := 'Не удалось сохранить журнал: ' + E.Message;
   end;
 end;
 
