@@ -6,7 +6,7 @@ interface
 
 const
   APP_NAME = 'Библиотека храма';
-  APP_VERSION = '1.1.0';
+  APP_VERSION = '1.1.1';
   DATA_SIGNATURE = 'LIBRA001';
   INDEX_SIGNATURE = 'LIBRAIDX';
   FORMAT_VERSION = 3;
@@ -26,6 +26,7 @@ const
   DEFAULT_COPY_CONDITION = COPY_CONDITION_MEDIUM;
 
 function EffectiveLibraryTitle(const ALibraryName: string): string;
+function ApplicationWindowTitle(const ALibraryName: string): string;
 function ClampUIFontSize(ASize: Integer): Integer;
 
 type
@@ -77,6 +78,11 @@ begin
   Result := Trim(ALibraryName);
   if Result = '' then
     Result := APP_NAME;
+end;
+
+function ApplicationWindowTitle(const ALibraryName: string): string;
+begin
+  Result := EffectiveLibraryTitle(ALibraryName) + ' — ' + APP_VERSION;
 end;
 
 function ClampUIFontSize(ASize: Integer): Integer;

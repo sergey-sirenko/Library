@@ -118,7 +118,7 @@ var
   U: TUser;
   SL: TStringList;
 begin
-  Title := EffectiveLibraryTitle(FDB.Settings.LibraryName);
+  Title := ApplicationWindowTitle(FDB.Settings.LibraryName);
   lblTitle.Caption := Title;
   Caption := Title;
   Application.Title := Title;

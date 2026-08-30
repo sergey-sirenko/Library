@@ -21,7 +21,7 @@ begin
   RequireDerivedFormResource := True;
   Application.Scaled := True;
   Application.Initialize;
-  Application.Title := APP_NAME;
+  Application.Title := ApplicationWindowTitle('');
   { иконка окна берётся из ресурса MAINICON (Library.rc) }
 
   DB := TLibraryDB.Create;
@@ -37,7 +37,7 @@ begin
         'Рекомендуется восстановить данные из резервной копии.', mtWarning, [mbOK], 0);
 
     { размер UI берётся из Settings.UIFontSize в формах через ApplyFormUIFont }
-    Application.Title := EffectiveLibraryTitle(DB.Settings.LibraryName);
+    Application.Title := ApplicationWindowTitle(DB.Settings.LibraryName);
 
     if (not DB.MaybeAutoBackup(Path, BackupErr)) and (BackupErr <> '') then
       MessageDlg(BackupErr, mtWarning, [mbOK], 0);

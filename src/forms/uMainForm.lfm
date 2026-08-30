@@ -812,7 +812,7 @@ object MainForm: TMainForm
           Height = 15
           Top = 424
           Width = 150
-          Caption = 'Текущая версия: 1.1.0'
+          Caption = 'Текущая версия: 1.1.1'
         end
         object btnCheckUpdate: TBitBtn
           Left = 24

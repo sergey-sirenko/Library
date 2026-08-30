@@ -1206,7 +1206,7 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
-  Caption := APP_NAME;
+  Caption := ApplicationWindowTitle('');
   WindowState := wsMaximized;
   pcMain.OwnerDraw := True;
   if pcMain.HandleAllocated then
@@ -1340,7 +1340,7 @@ var
 begin
   if FDB = nil then
     Exit;
-  Title := EffectiveLibraryTitle(FDB.Settings.LibraryName);
+  Title := ApplicationWindowTitle(FDB.Settings.LibraryName);
   Caption := Title;
   Application.Title := Title;
 end;

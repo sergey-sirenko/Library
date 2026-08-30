@@ -461,7 +461,7 @@ begin
     Path := Path + Extra;
     Port := UC.nPort;
     if Port = 0 then Port := INTERNET_DEFAULT_HTTPS_PORT;
-    Session := WinHttpOpen('LibraryAppUpdater/1.1.0',
+    Session := WinHttpOpen('LibraryAppUpdater/1.1.1',
       WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
       WINHTTP_NO_PROXY_BYPASS, 0);
     if Session = nil then
