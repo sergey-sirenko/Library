@@ -87,6 +87,7 @@ type
     btnUserEdit: TBitBtn;
     btnUserDelete: TBitBtn;
     gridUsers: TStringGrid;
+    sbSettings: TScrollBox;
     pnlSettings: TPanel;
     edtLibName: TEdit;
     edtLoanDays: TEdit;
@@ -98,7 +99,7 @@ type
     lblInventoryStart: TLabel;
     seInventoryStart: TSpinEdit;
     lblOpenRouterModel: TLabel;
-    edtOpenRouterModel: TEdit;
+    cbOpenRouterModel: TComboBox;
     btnSelectOpenRouterModel: TBitBtn;
     lblOpenRouterApiKey: TLabel;
     edtOpenRouterApiKey: TEdit;
@@ -195,6 +196,8 @@ type
     procedure RefreshOverdue;
     procedure RefreshUsers;
     procedure RefreshSettings;
+    procedure SetOpenRouterModel(const AModel: string);
+    procedure RefreshOpenRouterModelList;
     procedure RefreshBackups;
     procedure RefreshJournal;
     procedure RefreshCategories;
@@ -983,15 +986,18 @@ begin
     RecreateWnd(pcMain);
   SetupUIIcons;
   SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
+  gridBooks.OnDblClick := @btnBookEditClick;
   edtBookSearch.Hint := 'Поиск по названию, автору или ISBN';
   edtBookSearchInv.Hint := 'Поиск по инвентарному номеру экземпляра';
   edtBookSearch.Placeholder := 'По названию';
   edtBookSearchInv.Placeholder := 'По инв. №';
   edtBookSearchInv.OnKeyPress := @edtBookSearchInvKeyPress;
   SetupGrid(gridCopies, ['Инв. №', 'Статус', 'Место', 'Состояние', 'Удалён']);
+  gridCopies.OnDblClick := @btnCopyEditClick;
   gridBooks.OnSelection := @gridBooksSelection;
   splBooksCopies.OnMoved := @splBooksCopiesMoved;
   SetupGrid(gridReaders, ['ФИО', 'Телефон', 'Статус', 'Регистрация', 'Удалён']);
+  gridReaders.OnDblClick := @btnReaderEditClick;
   SetupGrid(gridLoans, ['Инв. №', 'Книга', 'Читатель', 'Выдана', 'Срок', 'Состояние']);
   FLoanIssuedCol := DATA_FIRST_COL + 3;
   FLoanDueCol := DATA_FIRST_COL + 4;
@@ -999,9 +1005,12 @@ begin
   SetupGrid(gridOverdue, ['Инв. №', 'Книга', 'Читатель', 'Срок', 'Дней']);
   gridOverdue.OnDblClick := @gridOverdueDblClick;
   SetupGrid(gridUsers, ['Логин', 'Имя', 'Роль', 'Активен', 'Удалён']);
+  gridUsers.OnDblClick := @btnUserEditClick;
   SetupGrid(gridJournal, ['Дата', 'Пользователь', 'Действие', 'Описание']);
   SetupGrid(gridCategories, ['Наименование', 'Шифр', 'Описание', 'Удалён']);
+  gridCategories.OnDblClick := @btnCatEditClick;
   SetupGrid(gridLocations, ['Наименование', 'Описание', 'Удалён']);
+  gridLocations.OnDblClick := @btnLocEditClick;
   SetupGrid(gridReport, ['']);
   FReportLines := TStringList.Create;
   cbReport.Items.Clear;
@@ -1517,7 +1526,8 @@ begin
   edtMaxRenew.Text := IntToStr(FDB.Settings.MaxRenewals);
   chkAutoBackup.Checked := FDB.Settings.AutoBackupEnabled;
   seUIFontSize.Value := ClampUIFontSize(FDB.Settings.UIFontSize);
-  edtOpenRouterModel.Text := FDB.Settings.OpenRouterModel;
+  RefreshOpenRouterModelList;
+  SetOpenRouterModel(FDB.Settings.OpenRouterModel);
   edtOpenRouterApiKey.Text := FDB.Settings.OpenRouterApiKey;
   if FDB.Settings.InventoryStartNo < 1 then
     seInventoryStart.Value := 1
@@ -1525,6 +1535,30 @@ begin
     seInventoryStart.Value := seInventoryStart.MaxValue
   else
     seInventoryStart.Value := FDB.Settings.InventoryStartNo;
+end;
+
+procedure TMainForm.RefreshOpenRouterModelList;
+var
+  i: Integer;
+  Current: string;
+begin
+  Current := cbOpenRouterModel.Text;
+  cbOpenRouterModel.Items.BeginUpdate;
+  try
+    cbOpenRouterModel.Items.Clear;
+    for i := 0 to FDB.Settings.OpenRouterFavoriteModels.Count - 1 do
+      cbOpenRouterModel.Items.Add(FDB.Settings.OpenRouterFavoriteModels[i]);
+    cbOpenRouterModel.ItemIndex := cbOpenRouterModel.Items.IndexOf(Trim(Current));
+    cbOpenRouterModel.Text := Current;
+  finally
+    cbOpenRouterModel.Items.EndUpdate;
+  end;
+end;
+
+procedure TMainForm.SetOpenRouterModel(const AModel: string);
+begin
+  cbOpenRouterModel.ItemIndex := cbOpenRouterModel.Items.IndexOf(Trim(AModel));
+  cbOpenRouterModel.Text := AModel;
 end;
 
 procedure TMainForm.ReflowToolbarPanel(APanel: TPanel);
@@ -1675,16 +1709,16 @@ begin
   Y := seInventoryStart.Top + seInventoryStart.Height + Gap;
   lblOpenRouterModel.SetBounds(Margin, Y, lblOpenRouterModel.Width, TextH + 2);
   Y := lblOpenRouterModel.Top + lblOpenRouterModel.Height + 4;
-  edtOpenRouterModel.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
+  cbOpenRouterModel.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
 
   W := Canvas.TextWidth(btnSelectOpenRouterModel.Caption) + ICON_SIZE + 28;
   if W < 140 then
     W := 140;
   btnSelectOpenRouterModel.SetBounds(
-    edtOpenRouterModel.Left + edtOpenRouterModel.Width + Gap,
-    edtOpenRouterModel.Top, W, Max(FieldH, ICON_SIZE + 12));
+    cbOpenRouterModel.Left + cbOpenRouterModel.Width + Gap,
+    cbOpenRouterModel.Top, W, Max(FieldH, ICON_SIZE + 12));
 
-  Y := edtOpenRouterModel.Top + edtOpenRouterModel.Height + Gap;
+  Y := cbOpenRouterModel.Top + cbOpenRouterModel.Height + Gap;
   lblOpenRouterApiKey.SetBounds(Margin, Y, lblOpenRouterApiKey.Width, TextH + 2);
   Y := lblOpenRouterApiKey.Top + lblOpenRouterApiKey.Height + 4;
   edtOpenRouterApiKey.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
@@ -1701,6 +1735,7 @@ begin
   if W < 140 then
     W := 140;
   btnSaveSettings.SetBounds(Margin, Y, W, Max(FieldH, ICON_SIZE + 12));
+  pnlSettings.Height := btnSaveSettings.Top + btnSaveSettings.Height + Margin;
 end;
 
 procedure TMainForm.ApplyUIFontSize;
@@ -2492,7 +2527,7 @@ begin
   if not FDB.UpdateSettings(edtLibName.Text, StrToIntDef(edtLoanDays.Text, 14),
     StrToIntDef(edtMaxBooks.Text, 5), StrToIntDef(edtMaxRenew.Text, 2),
     chkAutoBackup.Checked, seUIFontSize.Value,
-    Int64(seInventoryStart.Value), edtOpenRouterModel.Text,
+    Int64(seInventoryStart.Value), cbOpenRouterModel.Text,
     edtOpenRouterApiKey.Text, Err) then
     MessageDlg(Err, mtError, [mbOK], 0)
   else
@@ -2512,7 +2547,7 @@ var
   ModelOk: Boolean;
 begin
   ApiKey := Trim(edtOpenRouterApiKey.Text);
-  Model := Trim(edtOpenRouterModel.Text);
+  Model := Trim(cbOpenRouterModel.Text);
   if ApiKey = '' then
   begin
     MessageDlg('Введите OpenRouter API Key, чтобы выполнить проверку.',
@@ -2556,6 +2591,7 @@ end;
 procedure TMainForm.btnSelectOpenRouterModelClick(Sender: TObject);
 var
   ApiKey, Current, Selected: string;
+  Favorites: TStringList;
 begin
   ApiKey := Trim(edtOpenRouterApiKey.Text);
   if ApiKey = '' then
@@ -2569,11 +2605,19 @@ begin
   btnSelectOpenRouterModel.Enabled := False;
   btnSelectOpenRouterModel.Caption := 'Загрузка...';
   Screen.Cursor := crHourGlass;
-  Current := Trim(edtOpenRouterModel.Text);
+  Current := Trim(cbOpenRouterModel.Text);
+  Favorites := nil;
   try
-    if SelectOpenRouterModelDialog(ApiKey, Current, Selected) then
-      edtOpenRouterModel.Text := Selected;
+    if SelectOpenRouterModelDialog(ApiKey, Current,
+      FDB.Settings.OpenRouterFavoriteModels, Selected, Favorites) then
+    begin
+      FDB.Settings.OpenRouterFavoriteModels.Assign(Favorites);
+      RefreshOpenRouterModelList;
+      if Selected <> '' then
+        SetOpenRouterModel(Selected);
+    end;
   finally
+    Favorites.Free;
     Screen.Cursor := crDefault;
     btnSelectOpenRouterModel.Caption := '...';
     btnSelectOpenRouterModel.Enabled := True;

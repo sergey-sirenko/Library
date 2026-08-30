@@ -13,7 +13,8 @@ const
 { Низкоуровневый HTTP-вызов через WinHTTP (SChannel, без сторонних DLL).
   Используется также модулем uOpenRouterModels. }
 function HttpRequest(const AMethod, AUrl, AApiKey, ARequestBody: string;
-  out AStatusCode: DWORD; out AResponseBody: string; out AError: string): Boolean;
+  out AStatusCode: DWORD; out AResponseBody: string; out AError: string;
+  const ATimeoutMs: Cardinal = 0): Boolean;
 
 { Достаёт error.message из JSON-ответа OpenRouter (если есть). Пустая строка,
   если тело не JSON или поле отсутствует. }
@@ -33,6 +34,12 @@ uses
 const
   OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
   HTTP_USER_AGENT = 'LibraryApp/1.0';
+
+{ В WinHttp.pas из поставки Lazarus отсутствует это объявление, хотя функция
+  доступна в системной winhttp.dll. }
+function WinHttpSetTimeouts(hInternet: HINTERNET; nResolveTimeout,
+  nConnectTimeout, nSendTimeout, nReceiveTimeout: Integer): BOOL; stdcall;
+  external 'winhttp.dll' name 'WinHttpSetTimeouts';
 
 { Расшифровка основных кодов ошибок WinHTTP в человеческие сообщения. }
 function WinHttpErrorText(ACode: DWORD): string;
@@ -92,7 +99,8 @@ end;
 { HTTP-обёртка над WinHTTP. Внутри использует SChannel (встроен в Windows),
   внешних DLL не требует. Поддерживает GET (AResquestBody='') и POST JSON. }
 function HttpRequest(const AMethod, AUrl, AApiKey, ARequestBody: string;
-  out AStatusCode: DWORD; out AResponseBody: string; out AError: string): Boolean;
+  out AStatusCode: DWORD; out AResponseBody: string; out AError: string;
+  const ATimeoutMs: Cardinal): Boolean;
 var
   Session, Connect, Request: HINTERNET;
   UC: URL_COMPONENTS;
@@ -156,6 +164,16 @@ begin
       AError := 'Открытие HTTP-сессии: ' + WinHttpErrorText(ErrCode) + '.';
       Exit;
     end;
+    { Для операций, где вызывающая сторона задаёт ограничение времени,
+      не полагаемся на системные настройки WinHTTP. }
+    if ATimeoutMs > 0 then
+      if not WinHttpSetTimeouts(Session, Integer(ATimeoutMs),
+        Integer(ATimeoutMs), Integer(ATimeoutMs), Integer(ATimeoutMs)) then
+      begin
+        ErrCode := GetLastError;
+        AError := 'Настройка таймаута HTTP: ' + WinHttpErrorText(ErrCode) + '.';
+        Exit;
+      end;
     Connect := WinHttpConnect(Session, PWideChar(Host), Port, 0);
     if Connect = nil then
     begin
@@ -307,9 +325,9 @@ end;
 function ExtractRecognition(const AResponse: string; out ABook: TRecognizedBook;
   out AError: string): Boolean;
 var
-  Root, Parsed: TJSONData;
+  Root, Parsed, UsageData: TJSONData;
   Choices: TJSONArray;
-  MessageObj: TJSONObject;
+  RootObj, MessageObj, UsageObj: TJSONObject;
   Content: string;
 begin
   Result := False;
@@ -322,7 +340,8 @@ begin
       Root := GetJSON(AResponse);
       if not (Root is TJSONObject) then
         raise Exception.Create('Ответ не является JSON-объектом.');
-      Choices := TJSONObject(Root).Arrays['choices'];
+      RootObj := TJSONObject(Root);
+      Choices := RootObj.Arrays['choices'];
       if (Choices = nil) or (Choices.Count = 0) or not (Choices[0] is TJSONObject) then
         raise Exception.Create('В ответе отсутствует результат модели.');
       MessageObj := TJSONObject(TJSONObject(Choices[0]).Objects['message']);
@@ -337,6 +356,17 @@ begin
       ABook := TRecognizedBook.Create;
       ABook.Title := Trim(TJSONObject(Parsed).Get('title', ''));
       ABook.InventoryNo := Trim(TJSONObject(Parsed).Get('inventoryNumber', ''));
+      ABook.ModelUsed := Trim(RootObj.Get('model', ''));
+      UsageObj := RootObj.Objects['usage'];
+      if UsageObj <> nil then
+      begin
+        ABook.PromptTokens := UsageObj.Get('prompt_tokens', Int64(0));
+        ABook.CompletionTokens := UsageObj.Get('completion_tokens', Int64(0));
+        ABook.TotalTokens := UsageObj.Get('total_tokens', Int64(0));
+        UsageData := UsageObj.Find('cost');
+        if (UsageData <> nil) and (UsageData.JSONType <> jtNull) then
+          ABook.RecognitionCost := UsageData.AsFloat;
+      end;
       if (ABook.Title = '') or (ABook.InventoryNo = '') then
         raise Exception.Create('Модель не смогла определить все обязательные данные.');
       Result := True;

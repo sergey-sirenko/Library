@@ -37,6 +37,7 @@ type
     FCurrentUser: TUser;
     FRestoring: Boolean;
     procedure InitDefaults;
+    procedure SetDefaultOpenRouterFavoriteModels;
     procedure EnsureSeedData;
     procedure Touch(E: TEntity);
     function NewID(var Counter: TId): TId;
@@ -243,6 +244,7 @@ begin
   FSettings.InventoryStartNo := DEFAULT_INVENTORY_START_NO;
   FSettings.OpenRouterModel := '';
   FSettings.OpenRouterApiKey := '';
+  SetDefaultOpenRouterFavoriteModels;
   FNextBookID := 1;
   FNextCopyID := 1;
   FNextReaderID := 1;
@@ -929,6 +931,7 @@ var
   Payload: TMemoryStream;
   H: TDataHeader;
   CRC: LongWord;
+  i: Integer;
 begin
   S := TStream(Sender);
   Payload := TMemoryStream.Create;
@@ -943,8 +946,11 @@ begin
     WriteInt64(Payload, FSettings.InventoryStartNo);
     WriteString(Payload, FSettings.OpenRouterModel);
     WriteString(Payload, FSettings.OpenRouterApiKey);
+    WriteInteger(Payload, FSettings.OpenRouterFavoriteModels.Count);
+    for i := 0 to FSettings.OpenRouterFavoriteModels.Count - 1 do
+      WriteString(Payload, FSettings.OpenRouterFavoriteModels[i]);
     CRC := CalcCRC32(Payload, 0, Payload.Size);
-    FillDataHeader(H, 1, 4, CRC);
+    FillDataHeader(H, 1, 5, CRC);
     S.WriteBuffer(H, SizeOf(H));
     Payload.Position := 0;
     S.CopyFrom(Payload, Payload.Size);
@@ -957,6 +963,7 @@ procedure TLibraryDB.LoadSettingsStream(Sender: TObject);
 var
   S: TStream;
   H: TDataHeader;
+  i, FavoriteCount: Integer;
 begin
   S := TStream(Sender);
   S.ReadBuffer(H, SizeOf(H));
@@ -988,6 +995,38 @@ begin
     FSettings.OpenRouterApiKey := ReadString(S)
   else
     FSettings.OpenRouterApiKey := '';
+  { NextID >= 5 — список избранных моделей OpenRouter. }
+  if (H.NextID >= 5) and ((S.Size - S.Position) >= SizeOf(Integer)) then
+  begin
+    FavoriteCount := ReadInteger(S);
+    if FavoriteCount < 0 then
+      FavoriteCount := 0;
+    FSettings.OpenRouterFavoriteModels.Clear;
+    for i := 1 to FavoriteCount do
+      FSettings.OpenRouterFavoriteModels.Add(ReadString(S));
+  end
+  else
+    SetDefaultOpenRouterFavoriteModels;
+end;
+
+procedure TLibraryDB.SetDefaultOpenRouterFavoriteModels;
+const
+  DEFAULT_MODELS: array[0..7] of string = (
+    'google/gemini-3.6-flash',
+    'google/gemini-3.1-flash-lite',
+    'google/gemini-3.7-flash',
+    'google/gemini-3.5-flash-lite',
+    'qwen/qwen3.7-plus',
+    'openai/gpt-5.6-luna',
+    'openai/gpt-5.6-luna-pro',
+    'openai/gpt-4o-mini'
+  );
+var
+  i: Integer;
+begin
+  FSettings.OpenRouterFavoriteModels.Clear;
+  for i := Low(DEFAULT_MODELS) to High(DEFAULT_MODELS) do
+    FSettings.OpenRouterFavoriteModels.Add(DEFAULT_MODELS[i]);
 end;
 
 procedure TLibraryDB.SaveBooks;

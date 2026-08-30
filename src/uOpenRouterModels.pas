@@ -13,6 +13,7 @@ type
     Name: string;
     PromptPrice: Double;     { $ за 1 000 000 входных токенов }
     CompletionPrice: Double; { $ за 1 000 000 выходных токенов }
+    SupportsImage: Boolean;  { принимает изображения во входном запросе }
   end;
   TModelInfoArray = array of TModelInfo;
 
@@ -33,24 +34,31 @@ function ProviderOf(const AModelId: string): string;
 { True, если модель от «популярного» провайдера (см. POPULAR_PROVIDERS). }
 function IsPopularProvider(const AModelId: string): Boolean;
 
-{ Оставляет в массиве только платные модели от «популярных» провайдеров. }
+{ Оставляет только платные модели от популярных провайдеров,
+  которые принимают изображения. }
 procedure FilterPopularPaid(var A: TModelInfoArray);
 
 implementation
 
 uses
-  fpjson, jsonparser, uOpenRouter;
+  fpjson, jsonparser, StrUtils, uOpenRouter;
+
+const
+  MODELS_REQUEST_TIMEOUT_MS = 15000;
 
 function ParsePricePerMillion(const S: string): Double;
+var
+  FS: TFormatSettings;
 begin
   if Trim(S) = '' then
     Exit(0);
-  try
-    { OpenRouter отдаёт цену за токен; переводим в $/1M для удобства. }
-    Result := StrToFloat(S) * 1000000.0;
-  except
-    Result := 0;
-  end;
+  { JSON всегда использует точку независимо от региональных настроек Windows. }
+  FS := DefaultFormatSettings;
+  FS.DecimalSeparator := '.';
+  if not TryStrToFloat(Trim(S), Result, FS) then
+    Exit(0);
+  { OpenRouter отдаёт цену за токен; переводим в $/1M для удобства. }
+  Result := Result * 1000000.0;
 end;
 
 function FetchOpenRouterModels(const AApiKey: string;
@@ -58,9 +66,9 @@ function FetchOpenRouterModels(const AApiKey: string;
 var
   StatusCode: DWORD;
   ResponseBody, ServerMsg: string;
-  Root, ModelObj, PricingObj: TJSONData;
-  ModelsArr: TJSONArray;
-  i, N: Integer;
+  Root, ModelObj, PricingObj, ArchitectureObj: TJSONData;
+  ModelsArr, ModalitiesArr: TJSONArray;
+  i, j, N: Integer;
 begin
   Result := False;
   SetLength(AModels, 0);
@@ -71,7 +79,7 @@ begin
     Exit;
   end;
   if not HttpRequest('GET', OPENROUTER_MODELS_URL, AApiKey, '',
-    StatusCode, ResponseBody, AError) then
+    StatusCode, ResponseBody, AError, MODELS_REQUEST_TIMEOUT_MS) then
     Exit;
   if (StatusCode < 200) or (StatusCode >= 300) then
   begin
@@ -110,6 +118,7 @@ begin
     AModels[i].Name := '';
     AModels[i].PromptPrice := 0;
     AModels[i].CompletionPrice := 0;
+    AModels[i].SupportsImage := False;
     if ModelObj is TJSONObject then
     begin
       AModels[i].Id := Trim(TJSONObject(ModelObj).Get('id', ''));
@@ -122,6 +131,18 @@ begin
         AModels[i].CompletionPrice := ParsePricePerMillion(
           TJSONObject(PricingObj).Get('completion', ''));
       end;
+      ArchitectureObj := TJSONObject(ModelObj).Objects['architecture'];
+      if ArchitectureObj is TJSONObject then
+      begin
+        ModalitiesArr := TJSONObject(ArchitectureObj).Arrays['input_modalities'];
+        if ModalitiesArr <> nil then
+          for j := 0 to ModalitiesArr.Count - 1 do
+            if SameText(Trim(ModalitiesArr.Items[j].AsString), 'image') then
+            begin
+              AModels[i].SupportsImage := True;
+              Break;
+            end;
+      end;
     end;
   end;
   Root.Free;
@@ -129,31 +150,63 @@ begin
 end;
 
 procedure SortModelsByPromptPrice(var A: TModelInfoArray);
-var
-  i, j: Integer;
-  Tmp: TModelInfo;
-  Pi, Pj: Double;
-begin
-  for i := Low(A) to High(A) - 1 do
-    for j := i + 1 to High(A) do
-    begin
-      { Отрицательная цена — служебный sentinel (openrouter/auto и пр.),
-        такие модели уезжают в самый конец списка. }
-      if A[i].PromptPrice < 0 then
-        Pi := 1e18
-      else
-        Pi := A[i].PromptPrice;
-      if A[j].PromptPrice < 0 then
-        Pj := 1e18
-      else
-        Pj := A[j].PromptPrice;
-      if (Pj < Pi) or ((Pj = Pi) and (A[j].Id < A[i].Id)) then
+  function ComparablePromptPrice(const AModel: TModelInfo): Double;
+  begin
+    { Отрицательная цена — служебный sentinel (openrouter/auto и пр.),
+      такие модели уезжают в самый конец списка. }
+    if AModel.PromptPrice < 0 then
+      Result := 1e18
+    else
+      Result := AModel.PromptPrice;
+  end;
+
+  function CompareModels(const ALeft, ARight: TModelInfo): Integer;
+  var
+    LeftPrice, RightPrice: Double;
+  begin
+    LeftPrice := ComparablePromptPrice(ALeft);
+    RightPrice := ComparablePromptPrice(ARight);
+    if LeftPrice < RightPrice then
+      Exit(-1);
+    if LeftPrice > RightPrice then
+      Exit(1);
+    if ALeft.Id < ARight.Id then
+      Exit(-1);
+    if ALeft.Id > ARight.Id then
+      Exit(1);
+    Result := 0;
+  end;
+
+  procedure QuickSort(ALeft, ARight: Integer);
+  var
+    i, j: Integer;
+    Pivot, Tmp: TModelInfo;
+  begin
+    i := ALeft;
+    j := ARight;
+    Pivot := A[(ALeft + ARight) div 2];
+    repeat
+      while CompareModels(A[i], Pivot) < 0 do
+        Inc(i);
+      while CompareModels(A[j], Pivot) > 0 do
+        Dec(j);
+      if i <= j then
       begin
         Tmp := A[i];
         A[i] := A[j];
         A[j] := Tmp;
+        Inc(i);
+        Dec(j);
       end;
-    end;
+    until i > j;
+    if ALeft < j then
+      QuickSort(ALeft, j);
+    if i < ARight then
+      QuickSort(i, ARight);
+  end;
+begin
+  if Length(A) > 1 then
+    QuickSort(Low(A), High(A));
 end;
 
 function FormatModelPrice(P: Double): string;
@@ -203,14 +256,17 @@ begin
   Result := False;
 end;
 
-{ Оставляет в AModels только модели с PromptPrice > 0 от «популярных» провайдеров. }
+{ Оставляет только модели с PromptPrice > 0 от популярных провайдеров,
+  поддерживающие изображения во входном запросе. Batch-модели исключаются. }
 procedure FilterPopularPaid(var A: TModelInfoArray);
 var
   i, j: Integer;
 begin
   j := 0;
   for i := 0 to High(A) do
-    if (A[i].PromptPrice > 0) and IsPopularProvider(A[i].Id) then
+    if (A[i].PromptPrice > 0) and A[i].SupportsImage and
+      not EndsText(':batch', A[i].Id) and
+      IsPopularProvider(A[i].Id) then
     begin
       if j <> i then
         A[j] := A[i];

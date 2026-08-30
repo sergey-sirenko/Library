@@ -1370,20 +1370,33 @@ begin
     Grid.Parent := F;
     Grid.SetBounds(16, 38, F.ClientWidth - 32, 210);
     Grid.Anchors := [akLeft, akTop, akRight];
-    Grid.ColCount := 2;
+    Grid.ColCount := 5;
     Grid.RowCount := AItems.Count + 1;
     Grid.FixedRows := 1;
     Grid.FixedCols := 0;
     Grid.Options := Grid.Options + [goEditing, goAlwaysShowEditor, goColSizing];
     Grid.Cells[0, 0] := 'Наименование';
     Grid.Cells[1, 0] := 'Инв. номер';
-    Grid.ColWidths[0] := (Grid.ClientWidth * 2) div 3;
-    Grid.ColWidths[1] := Grid.ClientWidth - Grid.ColWidths[0] - 4;
+    Grid.Cells[2, 0] := 'Модель';
+    Grid.Cells[3, 0] := 'Токены (всего; вход/выход)';
+    Grid.Cells[4, 0] := 'Стоимость';
+    Grid.ColWidths[0] := 260;
+    Grid.ColWidths[1] := 100;
+    Grid.ColWidths[2] := 220;
+    Grid.ColWidths[3] := 170;
+    Grid.ColWidths[4] := 90;
     for I := 0 to AItems.Count - 1 do
     begin
       Item := TRecognizedBook(AItems[I]);
       Grid.Cells[0, I + 1] := Item.Title;
       Grid.Cells[1, I + 1] := Item.InventoryNo;
+      Grid.Cells[2, I + 1] := Item.ModelUsed;
+      Grid.Cells[3, I + 1] := Format('%d; %d/%d', [Item.TotalTokens,
+        Item.PromptTokens, Item.CompletionTokens]);
+      if Item.RecognitionCost > 0 then
+        Grid.Cells[4, I + 1] := Format('$%.6f', [Item.RecognitionCost])
+      else
+        Grid.Cells[4, I + 1] := '—';
     end;
 
     lblLocation := TLabel.Create(F);

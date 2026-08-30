@@ -104,6 +104,9 @@ type
     InventoryStartNo: Int64;
     OpenRouterModel: string;
     OpenRouterApiKey: string;
+    OpenRouterFavoriteModels: TStringList;
+    constructor Create;
+    destructor Destroy; override;
   end;
 
   TRecognizedBook = class
@@ -111,6 +114,11 @@ type
     SourceFile: string;
     Title: string;
     InventoryNo: string;
+    ModelUsed: string;
+    PromptTokens: Int64;
+    CompletionTokens: Int64;
+    TotalTokens: Int64;
+    RecognitionCost: Double;
   end;
 
   TActionLogItem = class
@@ -132,6 +140,18 @@ type
   end;
 
 implementation
+
+constructor TSettings.Create;
+begin
+  inherited Create;
+  OpenRouterFavoriteModels := TStringList.Create;
+end;
+
+destructor TSettings.Destroy;
+begin
+  OpenRouterFavoriteModels.Free;
+  inherited Destroy;
+end;
 
 function TEntityList.FindByID(AID: TId): TEntity;
 var
