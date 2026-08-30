@@ -644,7 +644,7 @@ object MainForm: TMainForm
         TabOrder = 0
         object pnlSettings: TPanel
         Left = 0
-        Height = 424
+        Height = 520
         Top = 0
         Width = 1016
         Align = alTop
@@ -806,6 +806,22 @@ object MainForm: TMainForm
           Caption = 'Сохранить'
           OnClick = btnSaveSettingsClick
           TabOrder = 11
+        end
+        object lblCurrentVersion: TLabel
+          Left = 24
+          Height = 15
+          Top = 424
+          Width = 150
+          Caption = 'Текущая версия: 1.1.0'
+        end
+        object btnCheckUpdate: TBitBtn
+          Left = 24
+          Height = 32
+          Top = 448
+          Width = 190
+          Caption = 'Проверить обновление'
+          OnClick = btnCheckUpdateClick
+          TabOrder = 12
         end
       end
       end

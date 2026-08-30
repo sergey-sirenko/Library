@@ -34,8 +34,9 @@ const
   icoCsv = 21;
   icoSave = 22;
   icoTest = 23;
+  icoRefresh = 24;
 
-  ICON_COUNT = 24;
+  ICON_COUNT = 25;
   ICON_SIZE = 16;
 
 procedure BuildAppIcons(AImages: TCustomImageList);
@@ -330,6 +331,18 @@ begin
   C.Pen.Width := 1;
 end;
 
+procedure DrawRefresh(C: TCanvas);
+begin
+  C.Arc(2, 2, 14, 14, 13, 5, 4, 4);
+  C.MoveTo(13, 3);
+  C.LineTo(13, 7);
+  C.LineTo(9, 7);
+  C.Arc(2, 2, 14, 14, 3, 11, 12, 12);
+  C.MoveTo(3, 13);
+  C.LineTo(3, 9);
+  C.LineTo(7, 9);
+end;
+
 type
   TIconDrawProc = procedure(C: TCanvas);
 
@@ -377,6 +390,7 @@ begin
   AddIcon(AImages, @DrawDoc);
   AddIcon(AImages, @DrawSave);
   AddIcon(AImages, @DrawCheck);
+  AddIcon(AImages, @DrawRefresh);
 end;
 
 end.

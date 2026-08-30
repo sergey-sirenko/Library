@@ -7,7 +7,8 @@ interface
 uses
   Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, ExtCtrls,
   StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs,
-  uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons, uOpenRouter;
+  uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons,
+  uOpenRouter, uUpdater;
 
 type
   { Owner-draw закладок: активная подпись — коричневым (LCL без OnDrawTab). }
@@ -108,6 +109,8 @@ type
     edtOpenRouterApiKey: TEdit;
     btnTestOpenRouter: TBitBtn;
     btnSaveSettings: TBitBtn;
+    lblCurrentVersion: TLabel;
+    btnCheckUpdate: TBitBtn;
     lblLibName: TLabel;
     lblLoanDays: TLabel;
     lblMaxBooks: TLabel;
@@ -162,6 +165,7 @@ type
     procedure btnUserEditClick(Sender: TObject);
     procedure btnUserDeleteClick(Sender: TObject);
     procedure btnSaveSettingsClick(Sender: TObject);
+    procedure btnCheckUpdateClick(Sender: TObject);
     procedure btnTestOpenRouterClick(Sender: TObject);
     procedure btnSelectOpenRouterModelClick(Sender: TObject);
     procedure btnBackupNowClick(Sender: TObject);
@@ -278,6 +282,140 @@ const
   ACTIVE_MARKER = '▶';
   { RGB(139,69,19) — коричневый для подписи активной закладки }
   ACTIVE_TAB_CAPTION_COLOR = TColor($0013458B);
+
+type
+  TUpdateProgressForm = class(TForm)
+  private
+    FCancelled: Boolean;
+    FRunning: Boolean;
+    FStatusLabel: TLabel;
+    FProgress: TProgressBar;
+    FCancelButton: TButton;
+    procedure CancelClick(Sender: TObject);
+    procedure FormCloseQueryHandler(Sender: TObject; var CanClose: Boolean);
+  public
+    constructor Create(AOwner: TComponent); override;
+    procedure SetStatus(const AText: string);
+    procedure SetProgress(AValue: Integer);
+    procedure Finish;
+    property Cancelled: Boolean read FCancelled;
+  end;
+
+constructor TUpdateProgressForm.Create(AOwner: TComponent);
+begin
+  inherited CreateNew(AOwner, 1);
+  Caption := 'Обновление программы';
+  BorderStyle := bsDialog;
+  Position := poScreenCenter;
+  ClientWidth := 430;
+  ClientHeight := 122;
+  FRunning := True;
+  OnCloseQuery := @FormCloseQueryHandler;
+
+  FStatusLabel := TLabel.Create(Self);
+  FStatusLabel.Parent := Self;
+  FStatusLabel.SetBounds(16, 16, 398, 22);
+  FStatusLabel.Caption := 'Проверка обновлений...';
+
+  FProgress := TProgressBar.Create(Self);
+  FProgress.Parent := Self;
+  FProgress.SetBounds(16, 44, 398, 20);
+  FProgress.Min := 0;
+  FProgress.Max := 1000;
+  FProgress.Position := 0;
+
+  FCancelButton := TButton.Create(Self);
+  FCancelButton.Parent := Self;
+  FCancelButton.SetBounds(304, 78, 110, 30);
+  FCancelButton.Caption := 'Отмена';
+  FCancelButton.OnClick := @CancelClick;
+end;
+
+procedure TUpdateProgressForm.CancelClick(Sender: TObject);
+begin
+  if not FRunning then Exit;
+  FCancelled := True;
+  FCancelButton.Enabled := False;
+  FStatusLabel.Caption := 'Отмена операции...';
+end;
+
+procedure TUpdateProgressForm.FormCloseQueryHandler(Sender: TObject;
+  var CanClose: Boolean);
+begin
+  if FRunning then
+  begin
+    CanClose := False;
+    CancelClick(Sender);
+  end
+  else
+    CanClose := True;
+end;
+
+procedure TUpdateProgressForm.SetStatus(const AText: string);
+begin
+  if not FCancelled then
+    FStatusLabel.Caption := AText;
+end;
+
+procedure TUpdateProgressForm.SetProgress(AValue: Integer);
+begin
+  if AValue < FProgress.Min then AValue := FProgress.Min;
+  if AValue > FProgress.Max then AValue := FProgress.Max;
+  FProgress.Position := AValue;
+end;
+
+procedure TUpdateProgressForm.Finish;
+begin
+  FRunning := False;
+end;
+
+function UpdateStageText(AStage: TUpdateStage): string;
+begin
+  case AStage of
+    usChecking: Result := 'Проверка обновлений...';
+    usDownloading: Result := 'Загрузка архива обновления...';
+    usVerifying: Result := 'Проверка контрольной суммы...';
+    usExtracting: Result := 'Проверка и распаковка архива...';
+    usReady: Result := 'Обновление подготовлено.';
+  else
+    Result := 'Подготовка обновления...';
+  end;
+end;
+
+procedure WaitForUpdateThread(AThread: TThread; AProgress: TUpdateProgressForm;
+  APrepareThread: TUpdatePrepareThread; ATotalBytes: Int64);
+var
+  ProgressValue: Integer;
+  LastStage: TUpdateStage;
+begin
+  LastStage := usIdle;
+  AThread.Start;
+  while not AThread.Finished do
+  begin
+    Sleep(50);
+    Application.ProcessMessages;
+    if AProgress.Cancelled then
+      AThread.Terminate;
+    if APrepareThread <> nil then
+    begin
+      if APrepareThread.Stage <> LastStage then
+      begin
+        LastStage := APrepareThread.Stage;
+        AProgress.SetStatus(UpdateStageText(LastStage));
+      end;
+      if (ATotalBytes > 0) and (LastStage = usDownloading) then
+      begin
+        ProgressValue := Round((APrepareThread.BytesDownloaded * 1000.0) /
+          ATotalBytes);
+        AProgress.SetProgress(ProgressValue);
+      end
+      else if LastStage in [usVerifying, usExtracting, usReady] then
+        AProgress.SetProgress(1000);
+    end;
+  end;
+  AThread.WaitFor;
+  AProgress.Finish;
+end;
 
 procedure TPageControl.LMDrawItem(var Message: TLMDrawItems);
 var
@@ -1189,6 +1327,7 @@ begin
   ApplyButtonIcon(btnUserDelete, icoDelete);
 
   ApplyButtonIcon(btnSaveSettings, icoSave);
+  ApplyButtonIcon(btnCheckUpdate, icoRefresh);
   ApplyButtonIcon(btnTestOpenRouter, icoTest);
   ApplyButtonIcon(btnSelectOpenRouterModel, icoTest);
   ApplyButtonIcon(btnBackupNow, icoBackup);
@@ -1582,6 +1721,7 @@ end;
 
 procedure TMainForm.RefreshSettings;
 begin
+  lblCurrentVersion.Caption := 'Текущая версия: ' + APP_VERSION;
   edtLibName.Text := FDB.Settings.LibraryName;
   edtLoanDays.Text := IntToStr(FDB.Settings.LoanDays);
   edtMaxBooks.Text := IntToStr(FDB.Settings.MaxBooksPerReader);
@@ -1728,6 +1868,7 @@ begin
   lblInventoryStart.AutoSize := True;
   lblOpenRouterModel.AutoSize := True;
   lblOpenRouterApiKey.AutoSize := True;
+  lblCurrentVersion.AutoSize := True;
 
   LeftY := Margin;
   lblLibName.SetBounds(Margin, LeftY, lblLibName.Width, TextH + 2);
@@ -1800,7 +1941,16 @@ begin
   btnSaveSettings.SetBounds(Margin,
     Max(LeftY, seInventoryStart.Top + seInventoryStart.Height + Gap),
     W, Max(FieldH, ICON_SIZE + 12));
-  pnlSettings.Height := btnSaveSettings.Top + btnSaveSettings.Height + Margin;
+
+  LeftY := btnSaveSettings.Top + btnSaveSettings.Height + Gap;
+  lblCurrentVersion.SetBounds(Margin, LeftY, lblCurrentVersion.Width, TextH + 2);
+  W := Canvas.TextWidth(btnCheckUpdate.Caption) + ICON_SIZE + 28;
+  if W < 190 then
+    W := 190;
+  btnCheckUpdate.SetBounds(Margin,
+    lblCurrentVersion.Top + lblCurrentVersion.Height + 6,
+    W, Max(FieldH, ICON_SIZE + 12));
+  pnlSettings.Height := btnCheckUpdate.Top + btnCheckUpdate.Height + Margin;
 end;
 
 procedure TMainForm.ApplyUIFontSize;
@@ -2602,6 +2752,134 @@ begin
     statusBar.SimpleText := 'Пользователь: ' + FDB.CurrentUser.DisplayName +
       ' | ' + EffectiveLibraryTitle(FDB.Settings.LibraryName);
     MessageDlg('Настройки сохранены.', mtInformation, [mbOK], 0);
+  end;
+end;
+
+procedure TMainForm.btnCheckUpdateClick(Sender: TObject);
+var
+  CheckThread: TUpdateCheckThread;
+  PrepareThread: TUpdatePrepareThread;
+  ProgressForm: TUpdateProgressForm;
+  ReleaseInfo: TUpdateRelease;
+  VersionValid: Boolean;
+  CompareResult: Integer;
+  WorkDir, BackupPath, Err, MessageText: string;
+begin
+  btnCheckUpdate.Enabled := False;
+  try
+    CheckThread := TUpdateCheckThread.Create;
+    ProgressForm := TUpdateProgressForm.Create(Self);
+    try
+      ProgressForm.SetStatus('Проверка обновлений...');
+      ProgressForm.Show;
+      Enabled := False;
+      WaitForUpdateThread(CheckThread, ProgressForm, nil, 0);
+      Enabled := True;
+      ProgressForm.Hide;
+      if ProgressForm.Cancelled then
+        Exit;
+      if CheckThread.ErrorText <> '' then
+      begin
+        FDB.TechLog.Write('Проверка обновления: ' + CheckThread.ErrorText);
+        MessageDlg(CheckThread.ErrorText, mtError, [mbOK], 0);
+        Exit;
+      end;
+      if CheckThread.NoRelease then
+      begin
+        MessageDlg('Опубликованных обновлений пока нет.', mtInformation,
+          [mbOK], 0);
+        Exit;
+      end;
+      ReleaseInfo := CheckThread.ReleaseInfo;
+    finally
+      ProgressForm.Free;
+      CheckThread.Free;
+    end;
+
+    CompareResult := CompareSemanticVersions(ReleaseInfo.Version, APP_VERSION,
+      VersionValid);
+    if not VersionValid then
+    begin
+      Err := 'Не удалось сравнить текущую версию с версией релиза.';
+      FDB.TechLog.Write('Проверка обновления: ' + Err);
+      MessageDlg(Err, mtError, [mbOK], 0);
+      Exit;
+    end;
+    if CompareResult <= 0 then
+    begin
+      if CompareResult = 0 then
+        MessageText := 'Установлена актуальная версия ' + APP_VERSION + '.'
+      else
+        MessageText := 'Установленная версия ' + APP_VERSION +
+          ' новее опубликованной версии ' + ReleaseInfo.Version + '.';
+      MessageDlg(MessageText, mtInformation, [mbOK], 0);
+      Exit;
+    end;
+
+    MessageText := 'Доступна новая версия ' + ReleaseInfo.Version + '.' +
+      LineEnding + 'Текущая версия: ' + APP_VERSION + '.' + LineEnding +
+      LineEnding + 'Скачать и установить обновление? Перед установкой будет ' +
+      'создана резервная копия данных.';
+    if MessageDlg(MessageText, mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+      Exit;
+
+    WorkDir := IncludeTrailingPathDelimiter(GetTempDir(False)) +
+      'LibraryUpdate-' + ReleaseInfo.Version + '-' + IntToStr(GetTickCount64);
+    PrepareThread := TUpdatePrepareThread.Create(ReleaseInfo, WorkDir);
+    ProgressForm := TUpdateProgressForm.Create(Self);
+    try
+      ProgressForm.SetStatus('Загрузка архива обновления...');
+      ProgressForm.Show;
+      Enabled := False;
+      WaitForUpdateThread(PrepareThread, ProgressForm, PrepareThread,
+        ReleaseInfo.AssetSize);
+      Enabled := True;
+      ProgressForm.Hide;
+      if ProgressForm.Cancelled then
+      begin
+        DeleteDirectory(WorkDir, False);
+        MessageDlg('Загрузка обновления отменена.', mtInformation, [mbOK], 0);
+        Exit;
+      end;
+      if PrepareThread.ErrorText <> '' then
+      begin
+        Err := PrepareThread.ErrorText;
+        DeleteDirectory(WorkDir, False);
+        FDB.TechLog.Write('Подготовка обновления: ' + Err);
+        MessageDlg(Err, mtError, [mbOK], 0);
+        Exit;
+      end;
+
+      if not FDB.CreateBackup(BackupPath, Err) then
+      begin
+        DeleteDirectory(WorkDir, False);
+        FDB.TechLog.Write('Обновление отменено: резервная копия не создана. ' +
+          Err);
+        MessageDlg('Не удалось создать резервную копию перед обновлением:' +
+          LineEnding + Err, mtError, [mbOK], 0);
+        Exit;
+      end;
+      RefreshBackups;
+      if not LaunchPreparedUpdate(PrepareThread.StagedUpdater,
+        PrepareThread.StagedApp, ExpandFileName(ParamStr(0)),
+        FDB.Paths.LogsDir + 'updater.log', WorkDir, Err) then
+      begin
+        DeleteDirectory(WorkDir, False);
+        FDB.TechLog.Write('Не удалось запустить установку обновления: ' + Err);
+        MessageDlg(Err, mtError, [mbOK], 0);
+        Exit;
+      end;
+      FDB.TechLog.Write('Подготовлена установка версии ' + ReleaseInfo.Version +
+        '. Резервная копия: ' + BackupPath);
+      Application.Terminate;
+    finally
+      ProgressForm.Free;
+      PrepareThread.Free;
+    end;
+  finally
+    Enabled := True;
+    if not Application.Terminated then
+      btnCheckUpdate.Enabled := True;
   end;
 end;
 

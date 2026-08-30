@@ -33,7 +33,7 @@ uses
 
 const
   OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
-  HTTP_USER_AGENT = 'LibraryApp/1.0';
+  HTTP_USER_AGENT = 'LibraryApp/1.1.0';
 
 { В WinHttp.pas из поставки Lazarus отсутствует это объявление, хотя функция
   доступна в системной winhttp.dll. }

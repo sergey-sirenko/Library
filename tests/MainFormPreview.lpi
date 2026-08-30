@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+      </Flags>
+      <Title Value="Library UI Preview"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+      <MainUnit Value="0"/>
+    </General>
+    <RequiredPackages Count="2">
+      <Item1><PackageName Value="LCL"/></Item1>
+      <Item2><PackageName Value="LazUtils"/></Item2>
+    </RequiredPackages>
+    <Units Count="1">
+      <Unit0>
+        <Filename Value="MainFormPreview.lpr"/>
+        <IsPartOfProject Value="True"/>
+      </Unit0>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <Target>
+      <Filename Value="../lib/tests/MainFormPreview"/>
+    </Target>
+    <SearchPaths>
+      <OtherUnitFiles Value="../src;../src/forms"/>
+      <UnitOutputDirectory Value="../lib/tests/preview-units"/>
+    </SearchPaths>
+    <Parsing><SyntaxOptions><SyntaxMode Value="ObjFPC"/></SyntaxOptions></Parsing>
+    <Linking><Options><Win32><GraphicApplication Value="True"/></Win32></Options></Linking>
+  </CompilerOptions>
+</CONFIG>
