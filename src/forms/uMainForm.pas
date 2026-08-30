@@ -53,6 +53,7 @@ type
     btnBookRestore: TBitBtn;
     btnCopyAdd: TBitBtn;
     chkShowDeleted: TCheckBox;
+    chkShowDeletedCopies: TCheckBox;
     gridBooks: TStringGrid;
     splBooksCopies: TSplitter;
     pnlCopiesBottom: TPanel;
@@ -68,6 +69,7 @@ type
     btnReaderEdit: TBitBtn;
     btnReaderDelete: TBitBtn;
     btnReaderRestore: TBitBtn;
+    chkShowDeletedReaders: TCheckBox;
     gridReaders: TStringGrid;
     pnlLoansTop: TPanel;
     btnLoanIssue: TBitBtn;
@@ -86,6 +88,7 @@ type
     btnUserAdd: TBitBtn;
     btnUserEdit: TBitBtn;
     btnUserDelete: TBitBtn;
+    chkShowDeletedUsers: TCheckBox;
     gridUsers: TStringGrid;
     sbSettings: TScrollBox;
     pnlSettings: TPanel;
@@ -118,11 +121,13 @@ type
     btnCatAdd: TBitBtn;
     btnCatEdit: TBitBtn;
     btnCatDelete: TBitBtn;
+    chkShowDeletedCategories: TCheckBox;
     gridCategories: TStringGrid;
     pnlLocTop: TPanel;
     btnLocAdd: TBitBtn;
     btnLocEdit: TBitBtn;
     btnLocDelete: TBitBtn;
+    chkShowDeletedLocations: TCheckBox;
     gridLocations: TStringGrid;
     statusBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
@@ -170,6 +175,11 @@ type
     procedure btnJournalKeepMonthClick(Sender: TObject);
     procedure pcMainChange(Sender: TObject);
     procedure chkShowDeletedChange(Sender: TObject);
+    procedure chkShowDeletedCopiesChange(Sender: TObject);
+    procedure chkShowDeletedReadersChange(Sender: TObject);
+    procedure chkShowDeletedCategoriesChange(Sender: TObject);
+    procedure chkShowDeletedLocationsChange(Sender: TObject);
+    procedure chkShowDeletedUsersChange(Sender: TObject);
     procedure chkLoansOnlyLoanedChange(Sender: TObject);
     procedure gridBooksSelection(Sender: TObject; aCol, aRow: Integer);
     procedure gridAnySelection(Sender: TObject; aCol, aRow: Integer);
@@ -189,6 +199,7 @@ type
     FIcons: TImageList;
     FLoanIssuedCol: Integer;
     FLoanDueCol: Integer;
+    FDeletedColumnWidths: array[0..5] of Integer;
     procedure RefreshAll;
     procedure RefreshBooks;
     procedure RefreshCopies;
@@ -216,6 +227,9 @@ type
     function SelectedCategory: TCategory;
     function SelectedLocation: TLocation;
     procedure SetupGrid(G: TStringGrid; const Cols: array of string);
+    function DeletedGridIndex(G: TStringGrid): Integer;
+    procedure SetDeletedColumnVisible(G: TStringGrid; AVisible: Boolean);
+    procedure UpdateDeletedColumnVisibility;
     function FindGridRowByID(G: TStringGrid; AID: TId): Integer;
     procedure SelectGridRow(G: TStringGrid; ARow: Integer; ASetFocus: Boolean);
     procedure SelectGridEntity(G: TStringGrid; AID: TId; ASetFocus: Boolean);
@@ -354,6 +368,54 @@ begin
       W := 280;
     G.ColWidths[I + DATA_FIRST_COL] := W;
   end;
+end;
+
+function TMainForm.DeletedGridIndex(G: TStringGrid): Integer;
+begin
+  Result := -1;
+  if G = gridBooks then Result := 0
+  else if G = gridCopies then Result := 1
+  else if G = gridReaders then Result := 2
+  else if G = gridCategories then Result := 3
+  else if G = gridLocations then Result := 4
+  else if G = gridUsers then Result := 5;
+end;
+
+procedure TMainForm.SetDeletedColumnVisible(G: TStringGrid; AVisible: Boolean);
+var
+  Index, Col: Integer;
+begin
+  Index := DeletedGridIndex(G);
+  if (Index < 0) or (G = nil) then
+    Exit;
+  Col := G.ColCount - 1;
+  if AVisible then
+  begin
+    if G.ColWidths[Col] >= 40 then
+      FDeletedColumnWidths[Index] := G.ColWidths[Col]
+    else
+    begin
+      if FDeletedColumnWidths[Index] < 40 then
+        FDeletedColumnWidths[Index] := 90;
+      G.ColWidths[Col] := FDeletedColumnWidths[Index];
+    end;
+  end
+  else
+  begin
+    if G.ColWidths[Col] >= 40 then
+      FDeletedColumnWidths[Index] := G.ColWidths[Col];
+    G.ColWidths[Col] := 0;
+  end;
+end;
+
+procedure TMainForm.UpdateDeletedColumnVisibility;
+begin
+  SetDeletedColumnVisible(gridBooks, chkShowDeleted.Checked);
+  SetDeletedColumnVisible(gridCopies, chkShowDeletedCopies.Checked);
+  SetDeletedColumnVisible(gridReaders, chkShowDeletedReaders.Checked);
+  SetDeletedColumnVisible(gridCategories, chkShowDeletedCategories.Checked);
+  SetDeletedColumnVisible(gridLocations, chkShowDeletedLocations.Checked);
+  SetDeletedColumnVisible(gridUsers, chkShowDeletedUsers.Checked);
 end;
 
 function TMainForm.GridRowHasData(G: TStringGrid; ARow: Integer): Boolean;
@@ -568,18 +630,27 @@ var
 
   procedure SaveOne(G: TStringGrid; const AName: string);
   var
-    I: Integer;
+    I, DeletedIndex, W: Integer;
     S: string;
   begin
     if (G = nil) or (G.ColCount <= 0) then
       Exit;
     S := '';
     G.ColWidths[ACTIVE_MARKER_COL] := ACTIVE_MARKER_WIDTH;
+    DeletedIndex := DeletedGridIndex(G);
     for I := DATA_FIRST_COL to G.ColCount - 1 do
     begin
       if I > DATA_FIRST_COL then
         S := S + ',';
-      S := S + IntToStr(G.ColWidths[I]);
+      W := G.ColWidths[I];
+      if (I = G.ColCount - 1) and (DeletedIndex >= 0) then
+      begin
+        if W >= 40 then
+          FDeletedColumnWidths[DeletedIndex] := W
+        else if FDeletedColumnWidths[DeletedIndex] >= 40 then
+          W := FDeletedColumnWidths[DeletedIndex];
+      end;
+      S := S + IntToStr(W);
     end;
     SL.Values[UserKey(AName)] := S;
   end;
@@ -604,7 +675,12 @@ begin
       SaveOne(gridJournal, 'Journal');
       if pnlCopiesBottom <> nil then
         SL.Values[UserKey('BooksCopiesPanelHeight')] := IntToStr(pnlCopiesBottom.Height);
-      SL.Values[UserKey('ShowDeleted')] := BoolToStr(chkShowDeleted.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedBooks')] := BoolToStr(chkShowDeleted.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedCopies')] := BoolToStr(chkShowDeletedCopies.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedReaders')] := BoolToStr(chkShowDeletedReaders.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedCategories')] := BoolToStr(chkShowDeletedCategories.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedLocations')] := BoolToStr(chkShowDeletedLocations.Checked, '1', '0');
+      SL.Values[UserKey('ShowDeletedUsers')] := BoolToStr(chkShowDeletedUsers.Checked, '1', '0');
       SL.Values[UserKey('LoansOnlyLoaned')] := BoolToStr(chkLoansOnlyLoaned.Checked, '1', '0');
       if pcMain.ActivePage <> nil then
         SL.Values[UserKey('ActivePage')] := pcMain.ActivePage.Name;
@@ -720,7 +796,19 @@ begin
       if pnlCopiesBottom <> nil then
         pnlCopiesBottom.Height := StrToIntDef(ReadValue('BooksCopiesPanelHeight'),
           pnlCopiesBottom.Height);
-      chkShowDeleted.Checked := ReadBoolValue('ShowDeleted', chkShowDeleted.Checked);
+      chkShowDeleted.Checked := ReadBoolValue('ShowDeletedBooks',
+        ReadBoolValue('ShowDeleted', chkShowDeleted.Checked));
+      chkShowDeletedCopies.Checked := ReadBoolValue('ShowDeletedCopies',
+        chkShowDeletedCopies.Checked);
+      chkShowDeletedReaders.Checked := ReadBoolValue('ShowDeletedReaders',
+        chkShowDeletedReaders.Checked);
+      chkShowDeletedCategories.Checked := ReadBoolValue('ShowDeletedCategories',
+        chkShowDeletedCategories.Checked);
+      chkShowDeletedLocations.Checked := ReadBoolValue('ShowDeletedLocations',
+        chkShowDeletedLocations.Checked);
+      chkShowDeletedUsers.Checked := ReadBoolValue('ShowDeletedUsers',
+        chkShowDeletedUsers.Checked);
+      UpdateDeletedColumnVisibility;
       chkLoansOnlyLoaned.Checked := ReadBoolValue('LoansOnlyLoaned', chkLoansOnlyLoaned.Checked);
       edtBookSearch.Text := ReadValue('BookSearch');
       edtBookSearchInv.Text := ReadValue('BookSearchInv');
@@ -1013,6 +1101,7 @@ begin
   SetupGrid(gridLocations, ['Наименование', 'Описание', 'Удалён']);
   gridLocations.OnDblClick := @btnLocEditClick;
   SetupGrid(gridReport, ['']);
+  UpdateDeletedColumnVisibility;
   FReportLines := TStringList.Create;
   cbReport.Items.Clear;
   cbReport.Items.Add('Каталог книг');
@@ -1290,7 +1379,7 @@ begin
   for I := 0 to FDB.Copies.Count - 1 do
   begin
     C := TCopy(FDB.Copies[I]);
-    if C.Deleted and (not chkShowDeleted.Checked) then Continue;
+    if C.Deleted and (not chkShowDeletedCopies.Checked) then Continue;
     if C.BookID <> B.ID then Continue;
     if Row >= gridCopies.RowCount then
       gridCopies.RowCount := Row + 1;
@@ -1330,7 +1419,7 @@ begin
     KeepID := SelectedReader.ID;
   List := TList.Create;
   try
-    FDB.SearchReaders(Trim(edtReaderSearch.Text), List, chkShowDeleted.Checked);
+    FDB.SearchReaders(Trim(edtReaderSearch.Text), List, chkShowDeletedReaders.Checked);
     gridReaders.RowCount := Max(2, List.Count + 1);
     if List.Count = 0 then
     begin
@@ -1466,7 +1555,7 @@ begin
   for I := 0 to FDB.Users.Count - 1 do
   begin
     U := TUser(FDB.Users[I]);
-    if U.Deleted and (not chkShowDeleted.Checked) then Continue;
+    if U.Deleted and (not chkShowDeletedUsers.Checked) then Continue;
     if Row >= gridUsers.RowCount then
       gridUsers.RowCount := Row + 1;
     gridUsers.Cells[DATA_FIRST_COL, Row] := U.Login;
@@ -1622,7 +1711,7 @@ end;
 
 procedure TMainForm.ReflowSettingsPanel;
 var
-  TextH, FieldH, Gap, Margin, Y, W: Integer;
+  TextH, FieldH, Gap, Margin, LeftY, RightY, RightX, W: Integer;
 begin
   if pnlSettings = nil then
     Exit;
@@ -1640,74 +1729,77 @@ begin
   lblOpenRouterModel.AutoSize := True;
   lblOpenRouterApiKey.AutoSize := True;
 
-  Y := Margin;
-  lblLibName.SetBounds(Margin, Y, lblLibName.Width, TextH + 2);
-  Y := lblLibName.Top + lblLibName.Height + 4;
-  edtLibName.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
+  LeftY := Margin;
+  lblLibName.SetBounds(Margin, LeftY, lblLibName.Width, TextH + 2);
+  LeftY := lblLibName.Top + lblLibName.Height + 4;
+  edtLibName.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
 
-  Y := edtLibName.Top + edtLibName.Height + Gap;
-  lblLoanDays.SetBounds(Margin, Y, lblLoanDays.Width, TextH + 2);
-  Y := lblLoanDays.Top + lblLoanDays.Height + 4;
-  edtLoanDays.SetBounds(Margin, Y, Max(120, Canvas.TextWidth('0000') + 24), FieldH);
-
-  Y := edtLoanDays.Top + edtLoanDays.Height + Gap;
-  lblMaxBooks.SetBounds(Margin, Y, lblMaxBooks.Width, TextH + 2);
-  Y := lblMaxBooks.Top + lblMaxBooks.Height + 4;
-  edtMaxBooks.SetBounds(Margin, Y, edtLoanDays.Width, FieldH);
-
-  Y := edtMaxBooks.Top + edtMaxBooks.Height + Gap;
-  lblMaxRenew.SetBounds(Margin, Y, lblMaxRenew.Width, TextH + 2);
-  Y := lblMaxRenew.Top + lblMaxRenew.Height + 4;
-  edtMaxRenew.SetBounds(Margin, Y, edtLoanDays.Width, FieldH);
-
-  Y := edtMaxRenew.Top + edtMaxRenew.Height + Gap;
+  LeftY := edtLibName.Top + edtLibName.Height + Gap;
   chkAutoBackup.AutoSize := True;
   chkAutoBackup.Left := Margin;
-  chkAutoBackup.Top := Y;
+  chkAutoBackup.Top := LeftY;
   chkAutoBackup.Height := Max(chkAutoBackup.Height, TextH + 8);
   W := Canvas.TextWidth(chkAutoBackup.Caption) + 28;
   if chkAutoBackup.Width < W then
     chkAutoBackup.Width := W;
 
-  Y := chkAutoBackup.Top + chkAutoBackup.Height + Gap;
-  lblUIFontSize.SetBounds(Margin, Y, lblUIFontSize.Width, TextH + 2);
-  Y := lblUIFontSize.Top + lblUIFontSize.Height + 4;
-  seUIFontSize.SetBounds(Margin, Y, edtLoanDays.Width, FieldH);
-
-  Y := seUIFontSize.Top + seUIFontSize.Height + Gap;
-  lblInventoryStart.SetBounds(Margin, Y, lblInventoryStart.Width, TextH + 2);
-  Y := lblInventoryStart.Top + lblInventoryStart.Height + 4;
-  seInventoryStart.SetBounds(Margin, Y, edtLoanDays.Width, FieldH);
-
-  Y := seInventoryStart.Top + seInventoryStart.Height + Gap;
-  lblOpenRouterModel.SetBounds(Margin, Y, lblOpenRouterModel.Width, TextH + 2);
-  Y := lblOpenRouterModel.Top + lblOpenRouterModel.Height + 4;
-  cbOpenRouterModel.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
-
-  W := Canvas.TextWidth(btnSelectOpenRouterModel.Caption) + ICON_SIZE + 28;
-  if W < 140 then
-    W := 140;
-  btnSelectOpenRouterModel.SetBounds(
-    cbOpenRouterModel.Left + cbOpenRouterModel.Width + Gap,
-    cbOpenRouterModel.Top, W, Max(FieldH, ICON_SIZE + 12));
-
-  Y := cbOpenRouterModel.Top + cbOpenRouterModel.Height + Gap;
-  lblOpenRouterApiKey.SetBounds(Margin, Y, lblOpenRouterApiKey.Width, TextH + 2);
-  Y := lblOpenRouterApiKey.Top + lblOpenRouterApiKey.Height + 4;
-  edtOpenRouterApiKey.SetBounds(Margin, Y, Max(400, Canvas.TextWidth('W') * 28), FieldH);
+  LeftY := chkAutoBackup.Top + chkAutoBackup.Height + Gap;
+  lblOpenRouterApiKey.SetBounds(Margin, LeftY, lblOpenRouterApiKey.Width, TextH + 2);
+  LeftY := lblOpenRouterApiKey.Top + lblOpenRouterApiKey.Height + 4;
+  edtOpenRouterApiKey.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
 
   W := Canvas.TextWidth(btnTestOpenRouter.Caption) + ICON_SIZE + 28;
   if W < 160 then
     W := 160;
-  btnTestOpenRouter.SetBounds(
-    edtOpenRouterApiKey.Left + edtOpenRouterApiKey.Width + Gap,
-    edtOpenRouterApiKey.Top, W, Max(FieldH, ICON_SIZE + 12));
+  btnTestOpenRouter.SetBounds(Margin,
+    edtOpenRouterApiKey.Top + edtOpenRouterApiKey.Height + 4,
+    W, Max(FieldH, ICON_SIZE + 12));
 
-  Y := edtOpenRouterApiKey.Top + edtOpenRouterApiKey.Height + Gap;
+  LeftY := btnTestOpenRouter.Top + btnTestOpenRouter.Height + Gap;
+  lblOpenRouterModel.SetBounds(Margin, LeftY, lblOpenRouterModel.Width, TextH + 2);
+  LeftY := lblOpenRouterModel.Top + lblOpenRouterModel.Height + 4;
+  cbOpenRouterModel.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
+
+  W := Canvas.TextWidth(btnSelectOpenRouterModel.Caption) + ICON_SIZE + 28;
+  if W < 140 then
+    W := 140;
+  btnSelectOpenRouterModel.SetBounds(Margin,
+    cbOpenRouterModel.Top + cbOpenRouterModel.Height + 4,
+    W, Max(FieldH, ICON_SIZE + 12));
+
+  RightX := edtLibName.Left + edtLibName.Width + Max(80, Gap * 4);
+  RightY := Margin;
+  lblLoanDays.SetBounds(RightX, RightY, lblLoanDays.Width, TextH + 2);
+  RightY := lblLoanDays.Top + lblLoanDays.Height + 4;
+  edtLoanDays.SetBounds(RightX, RightY, Max(120, Canvas.TextWidth('0000') + 24), FieldH);
+
+  RightY := edtLoanDays.Top + edtLoanDays.Height + Gap;
+  lblMaxBooks.SetBounds(RightX, RightY, lblMaxBooks.Width, TextH + 2);
+  RightY := lblMaxBooks.Top + lblMaxBooks.Height + 4;
+  edtMaxBooks.SetBounds(RightX, RightY, edtLoanDays.Width, FieldH);
+
+  RightY := edtMaxBooks.Top + edtMaxBooks.Height + Gap;
+  lblMaxRenew.SetBounds(RightX, RightY, lblMaxRenew.Width, TextH + 2);
+  RightY := lblMaxRenew.Top + lblMaxRenew.Height + 4;
+  edtMaxRenew.SetBounds(RightX, RightY, edtLoanDays.Width, FieldH);
+
+  RightY := edtMaxRenew.Top + edtMaxRenew.Height + Gap;
+  lblUIFontSize.SetBounds(RightX, RightY, lblUIFontSize.Width, TextH + 2);
+  RightY := lblUIFontSize.Top + lblUIFontSize.Height + 4;
+  seUIFontSize.SetBounds(RightX, RightY, edtLoanDays.Width, FieldH);
+
+  RightY := seUIFontSize.Top + seUIFontSize.Height + Gap;
+  lblInventoryStart.SetBounds(RightX, RightY, lblInventoryStart.Width, TextH + 2);
+  RightY := lblInventoryStart.Top + lblInventoryStart.Height + 4;
+  seInventoryStart.SetBounds(RightX, RightY, edtLoanDays.Width, FieldH);
+
+  LeftY := btnSelectOpenRouterModel.Top + btnSelectOpenRouterModel.Height + Gap;
   W := Canvas.TextWidth(btnSaveSettings.Caption) + ICON_SIZE + 28;
   if W < 140 then
     W := 140;
-  btnSaveSettings.SetBounds(Margin, Y, W, Max(FieldH, ICON_SIZE + 12));
+  btnSaveSettings.SetBounds(Margin,
+    Max(LeftY, seInventoryStart.Top + seInventoryStart.Height + Gap),
+    W, Max(FieldH, ICON_SIZE + 12));
   pnlSettings.Height := btnSaveSettings.Top + btnSaveSettings.Height + Margin;
 end;
 
@@ -1811,7 +1903,7 @@ begin
   for I := 0 to FDB.Categories.Count - 1 do
   begin
     C := TCategory(FDB.Categories[I]);
-    if C.Deleted and (not chkShowDeleted.Checked) then Continue;
+    if C.Deleted and (not chkShowDeletedCategories.Checked) then Continue;
     if Row >= gridCategories.RowCount then
       gridCategories.RowCount := Row + 1;
     gridCategories.Cells[DATA_FIRST_COL, Row] := C.Name;
@@ -1849,7 +1941,7 @@ begin
   for I := 0 to FDB.Locations.Count - 1 do
   begin
     L := TLocation(FDB.Locations[I]);
-    if L.Deleted and (not chkShowDeleted.Checked) then Continue;
+    if L.Deleted and (not chkShowDeletedLocations.Checked) then Continue;
     if Row >= gridLocations.RowCount then
       gridLocations.RowCount := Row + 1;
     gridLocations.Cells[DATA_FIRST_COL, Row] := L.Name;
@@ -2752,7 +2844,38 @@ end;
 
 procedure TMainForm.chkShowDeletedChange(Sender: TObject);
 begin
-  RefreshAll;
+  SetDeletedColumnVisible(gridBooks, chkShowDeleted.Checked);
+  RefreshBooks;
+end;
+
+procedure TMainForm.chkShowDeletedCopiesChange(Sender: TObject);
+begin
+  SetDeletedColumnVisible(gridCopies, chkShowDeletedCopies.Checked);
+  RefreshCopies;
+end;
+
+procedure TMainForm.chkShowDeletedReadersChange(Sender: TObject);
+begin
+  SetDeletedColumnVisible(gridReaders, chkShowDeletedReaders.Checked);
+  RefreshReaders;
+end;
+
+procedure TMainForm.chkShowDeletedCategoriesChange(Sender: TObject);
+begin
+  SetDeletedColumnVisible(gridCategories, chkShowDeletedCategories.Checked);
+  RefreshCategories;
+end;
+
+procedure TMainForm.chkShowDeletedLocationsChange(Sender: TObject);
+begin
+  SetDeletedColumnVisible(gridLocations, chkShowDeletedLocations.Checked);
+  RefreshLocations;
+end;
+
+procedure TMainForm.chkShowDeletedUsersChange(Sender: TObject);
+begin
+  SetDeletedColumnVisible(gridUsers, chkShowDeletedUsers.Checked);
+  RefreshUsers;
 end;
 
 procedure TMainForm.chkLoansOnlyLoanedChange(Sender: TObject);

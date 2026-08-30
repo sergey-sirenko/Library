@@ -187,6 +187,15 @@ object MainForm: TMainForm
           OnClick = btnCopyDeleteClick
           TabOrder = 2
         end
+        object chkShowDeletedCopies: TCheckBox
+          Left = 412
+          Height = 24
+          Top = 10
+          Width = 90
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedCopiesChange
+          TabOrder = 3
+        end
       end
       object gridCopies: TStringGrid
         Left = 0
@@ -272,6 +281,15 @@ object MainForm: TMainForm
           Caption = 'Восстановить'
           OnClick = btnReaderRestoreClick
           TabOrder = 5
+        end
+        object chkShowDeletedReaders: TCheckBox
+          Left = 828
+          Height = 24
+          Top = 10
+          Width = 90
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedReadersChange
+          TabOrder = 6
         end
       end
       object gridReaders: TStringGrid
@@ -417,6 +435,15 @@ object MainForm: TMainForm
           OnClick = btnCatDeleteClick
           TabOrder = 2
         end
+        object chkShowDeletedCategories: TCheckBox
+          Left = 382
+          Height = 24
+          Top = 10
+          Width = 90
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedCategoriesChange
+          TabOrder = 3
+        end
       end
       object gridCategories: TStringGrid
         Left = 0
@@ -468,6 +495,15 @@ object MainForm: TMainForm
           Caption = 'Удалить'
           OnClick = btnLocDeleteClick
           TabOrder = 2
+        end
+        object chkShowDeletedLocations: TCheckBox
+          Left = 382
+          Height = 24
+          Top = 10
+          Width = 90
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedLocationsChange
+          TabOrder = 3
         end
       end
       object gridLocations: TStringGrid
@@ -572,6 +608,15 @@ object MainForm: TMainForm
           OnClick = btnUserDeleteClick
           TabOrder = 2
         end
+        object chkShowDeletedUsers: TCheckBox
+          Left = 382
+          Height = 24
+          Top = 10
+          Width = 90
+          Caption = 'Удалённые'
+          OnChange = chkShowDeletedUsersChange
+          TabOrder = 3
+        end
       end
       object gridUsers: TStringGrid
         Left = 0
@@ -599,7 +644,7 @@ object MainForm: TMainForm
         TabOrder = 0
         object pnlSettings: TPanel
         Left = 0
-        Height = 640
+        Height = 424
         Top = 0
         Width = 1016
         Align = alTop
@@ -620,66 +665,66 @@ object MainForm: TMainForm
           TabOrder = 0
         end
         object lblLoanDays: TLabel
-          Left = 24
+          Left = 504
           Height = 15
-          Top = 88
+          Top = 24
           Width = 120
           Caption = 'Срок выдачи (дней)'
         end
         object edtLoanDays: TEdit
-          Left = 24
+          Left = 504
           Height = 28
-          Top = 108
+          Top = 44
           Width = 120
           TabOrder = 1
         end
         object lblMaxBooks: TLabel
-          Left = 24
+          Left = 504
           Height = 15
-          Top = 152
+          Top = 88
           Width = 200
           Caption = 'Макс. книг на руках'
         end
         object edtMaxBooks: TEdit
-          Left = 24
+          Left = 504
           Height = 28
-          Top = 172
+          Top = 108
           Width = 120
           TabOrder = 2
         end
         object lblMaxRenew: TLabel
-          Left = 24
+          Left = 504
           Height = 15
-          Top = 216
+          Top = 152
           Width = 180
           Caption = 'Макс. продлений'
         end
         object edtMaxRenew: TEdit
-          Left = 24
+          Left = 504
           Height = 28
-          Top = 236
+          Top = 172
           Width = 120
           TabOrder = 3
         end
         object chkAutoBackup: TCheckBox
           Left = 24
           Height = 24
-          Top = 284
+          Top = 88
           Width = 280
           Caption = 'Автоматическое еженедельное копирование'
           TabOrder = 4
         end
         object lblUIFontSize: TLabel
-          Left = 24
+          Left = 504
           Height = 15
-          Top = 328
+          Top = 216
           Width = 160
           Caption = 'Размер шрифта (пт)'
         end
         object seUIFontSize: TSpinEdit
-          Left = 24
+          Left = 504
           Height = 28
-          Top = 348
+          Top = 236
           Width = 120
           MaxValue = 16
           MinValue = 8
@@ -687,16 +732,16 @@ object MainForm: TMainForm
           Value = 9
         end
         object lblInventoryStart: TLabel
-          Left = 24
+          Left = 504
           Height = 15
-          Top = 392
+          Top = 280
           Width = 260
           Caption = 'Начало инвентарных номеров'
         end
         object seInventoryStart: TSpinEdit
-          Left = 24
+          Left = 504
           Height = 28
-          Top = 412
+          Top = 300
           Width = 120
           MaxValue = 9999999
           MinValue = 1
@@ -706,57 +751,57 @@ object MainForm: TMainForm
         object lblOpenRouterModel: TLabel
           Left = 24
           Height = 15
-          Top = 460
+          Top = 260
           Width = 160
           Caption = 'Модель OpenRouter'
         end
         object cbOpenRouterModel: TComboBox
           Left = 24
           Height = 28
-          Top = 480
+          Top = 280
           Width = 400
           Hint = 'Выберите модель из списка или введите её ID'
           ShowHint = True
           Style = csDropDown
-          TabOrder = 7
+          TabOrder = 9
         end
         object btnSelectOpenRouterModel: TBitBtn
-          Left = 440
+          Left = 24
           Height = 32
-          Top = 480
+          Top = 312
           Width = 140
           Caption = '...'
           OnClick = btnSelectOpenRouterModelClick
-          TabOrder = 8
+          TabOrder = 10
         end
         object lblOpenRouterApiKey: TLabel
           Left = 24
           Height = 15
-          Top = 524
+          Top = 132
           Width = 180
           Caption = 'OpenRouter API Key'
         end
         object edtOpenRouterApiKey: TEdit
           Left = 24
           Height = 28
-          Top = 544
+          Top = 152
           Width = 400
           PasswordChar = '*'
-          TabOrder = 9
+          TabOrder = 7
         end
         object btnTestOpenRouter: TBitBtn
-          Left = 440
+          Left = 24
           Height = 32
-          Top = 544
+          Top = 184
           Width = 180
           Caption = 'Тест соединения'
           OnClick = btnTestOpenRouterClick
-          TabOrder = 10
+          TabOrder = 8
         end
         object btnSaveSettings: TBitBtn
           Left = 24
           Height = 32
-          Top = 592
+          Top = 368
           Width = 180
           Caption = 'Сохранить'
           OnClick = btnSaveSettingsClick
