@@ -49,6 +49,7 @@ type
     btnBookSearch: TBitBtn;
     btnBookAdd: TBitBtn;
     btnBookRecognize: TBitBtn;
+    btnBookRecognizeText: TBitBtn;
     btnBookEdit: TBitBtn;
     btnBookDelete: TBitBtn;
     btnBookRestore: TBitBtn;
@@ -107,6 +108,8 @@ type
     btnSelectOpenRouterModel: TBitBtn;
     lblOpenRouterApiKey: TLabel;
     edtOpenRouterApiKey: TEdit;
+    lblGoogleBooksApiKey: TLabel;
+    edtGoogleBooksApiKey: TEdit;
     btnTestOpenRouter: TBitBtn;
     btnSaveSettings: TBitBtn;
     lblCurrentVersion: TLabel;
@@ -143,6 +146,7 @@ type
     procedure edtBookSearchInvKeyPress(Sender: TObject; var Key: char);
     procedure btnBookAddClick(Sender: TObject);
     procedure btnBookRecognizeClick(Sender: TObject);
+    procedure btnBookRecognizeTextClick(Sender: TObject);
     procedure btnBookEditClick(Sender: TObject);
     procedure btnBookDeleteClick(Sender: TObject);
     procedure btnBookRestoreClick(Sender: TObject);
@@ -1293,6 +1297,7 @@ begin
   ApplyButtonIcon(btnBookSearch, icoSearch);
   ApplyButtonIcon(btnBookAdd, icoAdd);
   ApplyButtonIcon(btnBookRecognize, icoRun);
+  ApplyButtonIcon(btnBookRecognizeText, icoRun);
   ApplyButtonIcon(btnBookEdit, icoEdit);
   ApplyButtonIcon(btnBookDelete, icoDelete);
   ApplyButtonIcon(btnBookRestore, icoRestore);
@@ -1731,6 +1736,7 @@ begin
   RefreshOpenRouterModelList;
   SetOpenRouterModel(FDB.Settings.OpenRouterModel);
   edtOpenRouterApiKey.Text := FDB.Settings.OpenRouterApiKey;
+  edtGoogleBooksApiKey.Text := FDB.Settings.GoogleBooksApiKey;
   if FDB.Settings.InventoryStartNo < 1 then
     seInventoryStart.Value := 1
   else if FDB.Settings.InventoryStartNo > seInventoryStart.MaxValue then
@@ -1868,6 +1874,7 @@ begin
   lblInventoryStart.AutoSize := True;
   lblOpenRouterModel.AutoSize := True;
   lblOpenRouterApiKey.AutoSize := True;
+  lblGoogleBooksApiKey.AutoSize := True;
   lblCurrentVersion.AutoSize := True;
 
   LeftY := Margin;
@@ -1889,11 +1896,16 @@ begin
   LeftY := lblOpenRouterApiKey.Top + lblOpenRouterApiKey.Height + 4;
   edtOpenRouterApiKey.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
 
+  LeftY := edtOpenRouterApiKey.Top + edtOpenRouterApiKey.Height + Gap;
+  lblGoogleBooksApiKey.SetBounds(Margin, LeftY, lblGoogleBooksApiKey.Width, TextH + 2);
+  LeftY := lblGoogleBooksApiKey.Top + lblGoogleBooksApiKey.Height + 4;
+  edtGoogleBooksApiKey.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
+
   W := Canvas.TextWidth(btnTestOpenRouter.Caption) + ICON_SIZE + 28;
   if W < 160 then
     W := 160;
   btnTestOpenRouter.SetBounds(Margin,
-    edtOpenRouterApiKey.Top + edtOpenRouterApiKey.Height + 4,
+    edtGoogleBooksApiKey.Top + edtGoogleBooksApiKey.Height + 4,
     W, Max(FieldH, ICON_SIZE + 12));
 
   LeftY := btnTestOpenRouter.Top + btnTestOpenRouter.Height + Gap;
@@ -2220,6 +2232,7 @@ var
   Failures: TStringList;
   I: Integer;
   Recognized: TRecognizedBook;
+  Stats, ItemStats: TRecognitionStats;
   Err, FileName: string;
 begin
   if (Trim(FDB.Settings.OpenRouterModel) = '') or
@@ -2241,6 +2254,7 @@ begin
     Results := TObjectList.Create(True);
     Failures := TStringList.Create;
     try
+      ClearRecognitionStats(Stats);
       Screen.Cursor := crHourGlass;
       for I := 0 to OpenDlg.Files.Count - 1 do
       begin
@@ -2250,10 +2264,11 @@ begin
         Application.ProcessMessages;
         Recognized := nil;
         if RecognizeBookImage(FileName, FDB.Settings.OpenRouterModel,
-          FDB.Settings.OpenRouterApiKey, Recognized, Err) then
+          FDB.Settings.OpenRouterApiKey, Recognized, ItemStats, Err) then
         begin
           Recognized.SourceFile := FileName;
           Results.Add(Recognized);
+          MergeRecognitionStats(Stats, ItemStats);
         end
         else
           Failures.Add(ExtractFileName(FileName) + ': ' + Err);
@@ -2268,10 +2283,71 @@ begin
           Failures.Text, mtError, [mbOK], 0);
         Exit;
       end;
-      if ImportRecognizedBooksDialog(FDB, Results, Failures) then
+      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats) then
       begin
         RefreshBooks;
         RefreshCopies;
+        RefreshCategories;
+      end;
+    finally
+      Failures.Free;
+      Results.Free;
+      statusBar.SimpleText := 'Пользователь: ' + FDB.CurrentUser.DisplayName +
+        ' | ' + EffectiveLibraryTitle(FDB.Settings.LibraryName);
+    end;
+  finally
+    OpenDlg.Free;
+  end;
+end;
+
+procedure TMainForm.btnBookRecognizeTextClick(Sender: TObject);
+var
+  OpenDlg: TOpenDialog;
+  Results: TObjectList;
+  Failures: TStringList;
+  Stats: TRecognitionStats;
+  Err: string;
+begin
+  if (Trim(FDB.Settings.OpenRouterModel) = '') or
+     (Trim(FDB.Settings.OpenRouterApiKey) = '') then
+  begin
+    pcMain.ActivePage := tsSettings;
+    MessageDlg('Заполните «Модель OpenRouter» и «OpenRouter API Key» в настройках, затем сохраните их.',
+      mtWarning, [mbOK], 0);
+    Exit;
+  end;
+
+  OpenDlg := TOpenDialog.Create(Self);
+  try
+    OpenDlg.Title := 'Выберите текстовый файл с данными книг';
+    OpenDlg.Filter := 'Текстовые файлы (*.txt)|*.txt';
+    OpenDlg.DefaultExt := 'txt';
+    OpenDlg.Options := [ofFileMustExist, ofEnableSizing];
+    if not OpenDlg.Execute then
+      Exit;
+    Results := TObjectList.Create(True);
+    Failures := TStringList.Create;
+    try
+      try
+        Screen.Cursor := crHourGlass;
+        statusBar.SimpleText := 'Распознавание текстового файла: ' +
+          ExtractFileName(OpenDlg.FileName);
+        Application.ProcessMessages;
+        if not RecognizeBooksTextFile(OpenDlg.FileName, FDB.Settings.OpenRouterModel,
+          FDB.Settings.OpenRouterApiKey, Results, Stats, Err) then
+        begin
+          MessageDlg('Не удалось распознать текстовый файл.' + LineEnding + Err,
+            mtError, [mbOK], 0);
+          Exit;
+        end;
+      finally
+        Screen.Cursor := crDefault;
+      end;
+      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats) then
+      begin
+        RefreshBooks;
+        RefreshCopies;
+        RefreshCategories;
       end;
     finally
       Failures.Free;
@@ -2743,7 +2819,7 @@ begin
     StrToIntDef(edtMaxBooks.Text, 5), StrToIntDef(edtMaxRenew.Text, 2),
     chkAutoBackup.Checked, seUIFontSize.Value,
     Int64(seInventoryStart.Value), cbOpenRouterModel.Text,
-    edtOpenRouterApiKey.Text, Err) then
+    edtOpenRouterApiKey.Text, edtGoogleBooksApiKey.Text, Err) then
     MessageDlg(Err, mtError, [mbOK], 0)
   else
   begin

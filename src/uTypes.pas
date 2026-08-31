@@ -6,7 +6,7 @@ interface
 
 const
   APP_NAME = 'Библиотека храма';
-  APP_VERSION = '1.1.1';
+  APP_VERSION = '1.1.2';
   DATA_SIGNATURE = 'LIBRA001';
   INDEX_SIGNATURE = 'LIBRAIDX';
   FORMAT_VERSION = 3;

@@ -104,6 +104,7 @@ type
     InventoryStartNo: Int64;
     OpenRouterModel: string;
     OpenRouterApiKey: string;
+    GoogleBooksApiKey: string;
     OpenRouterFavoriteModels: TStringList;
     constructor Create;
     destructor Destroy; override;
@@ -114,11 +115,21 @@ type
     SourceFile: string;
     Title: string;
     InventoryNo: string;
-    ModelUsed: string;
+    Authors: string;
+    Year: string;
+    Publisher: string;
+    ISBN: string;
+    Description: string;
+    CategoryName: string;
+  end;
+
+  TRecognitionStats = record
+    Models: string;
     PromptTokens: Int64;
     CompletionTokens: Int64;
     TotalTokens: Int64;
     RecognitionCost: Double;
+    HasCost: Boolean;
   end;
 
   TActionLogItem = class
@@ -139,7 +150,73 @@ type
     function FindByID(AID: TId): TEntity;
   end;
 
+procedure ClearRecognitionStats(out AStats: TRecognitionStats);
+procedure MergeRecognitionStats(var ATarget: TRecognitionStats;
+  const ASource: TRecognitionStats);
+
 implementation
+
+procedure ClearRecognitionStats(out AStats: TRecognitionStats);
+begin
+  AStats.Models := '';
+  AStats.PromptTokens := 0;
+  AStats.CompletionTokens := 0;
+  AStats.TotalTokens := 0;
+  AStats.RecognitionCost := 0;
+  AStats.HasCost := False;
+end;
+
+procedure AddRecognitionModel(var AModels: string; const AModel: string);
+var
+  Models: TStringList;
+  I: Integer;
+  CleanModel: string;
+begin
+  CleanModel := Trim(AModel);
+  if CleanModel = '' then
+    Exit;
+  Models := TStringList.Create;
+  try
+    Models.StrictDelimiter := True;
+    Models.Delimiter := ';';
+    Models.DelimitedText := StringReplace(AModels, '; ', ';', [rfReplaceAll]);
+    for I := 0 to Models.Count - 1 do
+      if SameText(Trim(Models[I]), CleanModel) then
+        Exit;
+    if AModels = '' then
+      AModels := CleanModel
+    else
+      AModels := AModels + '; ' + CleanModel;
+  finally
+    Models.Free;
+  end;
+end;
+
+procedure MergeRecognitionStats(var ATarget: TRecognitionStats;
+  const ASource: TRecognitionStats);
+var
+  Models: TStringList;
+  I: Integer;
+begin
+  Models := TStringList.Create;
+  try
+    Models.StrictDelimiter := True;
+    Models.Delimiter := ';';
+    Models.DelimitedText := StringReplace(ASource.Models, '; ', ';', [rfReplaceAll]);
+    for I := 0 to Models.Count - 1 do
+      AddRecognitionModel(ATarget.Models, Models[I]);
+  finally
+    Models.Free;
+  end;
+  Inc(ATarget.PromptTokens, ASource.PromptTokens);
+  Inc(ATarget.CompletionTokens, ASource.CompletionTokens);
+  Inc(ATarget.TotalTokens, ASource.TotalTokens);
+  if ASource.HasCost then
+  begin
+    ATarget.RecognitionCost := ATarget.RecognitionCost + ASource.RecognitionCost;
+    ATarget.HasCost := True;
+  end;
+end;
 
 constructor TSettings.Create;
 begin

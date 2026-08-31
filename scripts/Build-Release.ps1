@@ -116,7 +116,7 @@ Test-UpdaterExecutable
 
 $appExe = Join-Path $repoRoot 'Prog\Library.exe'
 $updaterExe = Join-Path $repoRoot 'Prog\LibraryUpdater.exe'
-$instruction = Join-Path $repoRoot 'Инструкция_установки_новой_версии.md'
+$instruction = Join-Path $repoRoot 'docs\Инструкция_установки_новой_версии.md'
 foreach ($requiredFile in @($appExe, $updaterExe, $instruction)) {
   if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
     throw "Не найден файл релиза: $requiredFile"

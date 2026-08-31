@@ -19,6 +19,8 @@ type
     function CoversDir: string;
     function BackupDir: string;
     function LogsDir: string;
+    function CacheDir: string;
+    function OpenLibraryCacheDir: string;
     function DataFile(const AName: string): string;
     function IndexFile(const AName: string): string;
     function LockFile: string;
@@ -46,6 +48,7 @@ begin
   ForceDirectories(CoversDir);
   ForceDirectories(BackupDir);
   ForceDirectories(LogsDir);
+  ForceDirectories(OpenLibraryCacheDir);
 end;
 
 function TAppPaths.DataDir: string;
@@ -66,6 +69,16 @@ end;
 function TAppPaths.LogsDir: string;
 begin
   Result := FRoot + 'Logs' + PathDelim;
+end;
+
+function TAppPaths.CacheDir: string;
+begin
+  Result := FRoot + 'Cache' + PathDelim;
+end;
+
+function TAppPaths.OpenLibraryCacheDir: string;
+begin
+  Result := CacheDir + 'OpenLibrary' + PathDelim;
 end;
 
 function TAppPaths.DataFile(const AName: string): string;

@@ -17,9 +17,12 @@ function EditUserDialog(ADB: TLibraryDB; AUser: TUser; out AResultID: TId): Bool
 function IssueLoanDialog(ADB: TLibraryDB; out AResultID: TId): Boolean;
 function PickDateDialog(ADB: TLibraryDB; const ATitle: string; var ADate: TDateTime): Boolean;
 function ImportRecognizedBooksDialog(ADB: TLibraryDB; AItems: TList;
-  AFailures: TStrings): Boolean;
+  AFailures: TStrings; const AStats: TRecognitionStats): Boolean;
 
 implementation
+
+uses
+  LazUTF8, FPImage, FPReadJPEG, FPReadPNG, IntfGraphics, uOpenLibrary;
 
 function FieldHeight(AForm: TForm): Integer;
 begin
@@ -89,6 +92,56 @@ begin
   end;
 end;
 
+function LoadCardLayoutID(ADB: TLibraryDB; const AKey,
+  ASuffix: string): TId;
+var
+  SL: TStringList;
+  Fn: string;
+begin
+  Result := 0;
+  if (ADB = nil) or (ADB.CurrentUser = nil) then
+    Exit;
+  Fn := ADB.Paths.UserLayoutFile;
+  if not FileExists(Fn) then
+    Exit;
+  SL := TStringList.Create;
+  try
+    try
+      SL.LoadFromFile(Fn);
+      Result := StrToInt64Def(
+        SL.Values[CardLayoutUserKey(ADB, AKey, ASuffix)], 0);
+    except
+      Result := 0;
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
+procedure SaveCardLayoutID(ADB: TLibraryDB; const AKey,
+  ASuffix: string; AValue: TId);
+var
+  SL: TStringList;
+  Fn: string;
+begin
+  if (ADB = nil) or (ADB.CurrentUser = nil) then
+    Exit;
+  Fn := ADB.Paths.UserLayoutFile;
+  SL := TStringList.Create;
+  try
+    try
+      if FileExists(Fn) then
+        SL.LoadFromFile(Fn);
+      SL.Values[CardLayoutUserKey(ADB, AKey, ASuffix)] := IntToStr(AValue);
+      SL.SaveToFile(Fn);
+    except
+      { последнее место хранения не критично для сохранения книги }
+    end;
+  finally
+    SL.Free;
+  end;
+end;
+
 procedure PrepareCardForm(AForm: TForm);
 begin
   AForm.BorderStyle := bsSizeable;
@@ -111,9 +164,7 @@ var
   H: Integer;
   F: TForm;
 begin
-  F := nil;
-  if AOwner is TForm then
-    F := TForm(AOwner);
+  F := TForm(GetParentForm(AOwner));
   Result := TLabel.Create(AOwner);
   Result.Parent := AOwner;
   Result.Left := 16;
@@ -140,15 +191,37 @@ begin
   ATop := AEdit.Top + AEdit.Height + 8;
 end;
 
+function InputPanelWithButton(AOwner: TWinControl; const ACaption: string;
+  var ATop: Integer; AWidth: Integer; const AButtonCaption: string;
+  out AEdit: TEdit; out AButton: TButton): TLabel;
+var
+  ButtonWidth: Integer;
+  F: TForm;
+begin
+  Result := InputPanel(AOwner, ACaption, ATop, AWidth, AEdit);
+  AButton := TButton.Create(AOwner);
+  AButton.Parent := AOwner;
+  AButton.Caption := AButtonCaption;
+  F := TForm(GetParentForm(AOwner));
+  if F <> nil then
+    ButtonWidth := Max(90, Max(
+      F.Canvas.TextWidth(AButtonCaption),
+      F.Canvas.TextWidth('Загрузка...')) + 28)
+  else
+    ButtonWidth := 90;
+  AButton.SetBounds(AEdit.Left + AWidth - ButtonWidth, AEdit.Top,
+    ButtonWidth, AEdit.Height);
+  AButton.Anchors := [akTop, akRight];
+  AEdit.Width := Max(80, AWidth - ButtonWidth - 8);
+end;
+
 function InputCombo(AOwner: TWinControl; const ACaption: string; var ATop: Integer;
   AWidth: Integer; out ACombo: TComboBox): TLabel;
 var
   H: Integer;
   F: TForm;
 begin
-  F := nil;
-  if AOwner is TForm then
-    F := TForm(AOwner);
+  F := TForm(GetParentForm(AOwner));
   Result := TLabel.Create(AOwner);
   Result.Parent := AOwner;
   Result.Left := 16;
@@ -217,10 +290,24 @@ type
     DB: TLibraryDB;
     Form: TForm;
     Book: TBook;
-    eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover: TEdit;
-    cbCat: TComboBox;
+    eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover, eInv: TEdit;
+    btnFillISBN: TButton;
+    cbCat, cbLoc: TComboBox;
+    FieldsPanel, CoverPanel: TPanel;
+    CoverPreview: TImage;
+    CoverPlaceholder: TLabel;
+    btnOK: TButton;
+    ExternalCategoryIndex: Integer;
     ResultID: TId;
     Saved: Boolean;
+    function FindActiveCategory(const AName: string): TCategory;
+    procedure SelectExternalCategory(const AName: string);
+    procedure UpdateCoverPreview;
+    procedure CoverPathChange(Sender: TObject);
+    procedure FormResize(Sender: TObject);
+    procedure FormShow(Sender: TObject);
+    procedure FillISBNClick(Sender: TObject);
+    procedure ISBNKeyPress(Sender: TObject; var Key: Char);
     procedure OKClick(Sender: TObject);
   end;
 
@@ -318,25 +405,226 @@ type
     procedure SaveClick(Sender: TObject);
   end;
 
+function TBookDlgHelper.FindActiveCategory(const AName: string): TCategory;
+var
+  I: Integer;
+  Category: TCategory;
+begin
+  for I := 0 to DB.Categories.Count - 1 do
+  begin
+    Category := TCategory(DB.Categories[I]);
+    if (not Category.Deleted) and
+      (UTF8CompareText(Trim(Category.Name), Trim(AName)) = 0) then
+      Exit(Category);
+  end;
+  Result := nil;
+end;
+
+procedure TBookDlgHelper.SelectExternalCategory(const AName: string);
+var
+  I: Integer;
+  Category: TCategory;
+begin
+  if Trim(AName) = '' then
+    Exit;
+  if (ExternalCategoryIndex >= 0) and
+    (ExternalCategoryIndex < cbCat.Items.Count) and
+    (cbCat.Items.Objects[ExternalCategoryIndex] = nil) then
+  begin
+    cbCat.Items.Delete(ExternalCategoryIndex);
+    ExternalCategoryIndex := -1;
+  end;
+  for I := 0 to cbCat.Items.Count - 1 do
+    if cbCat.Items.Objects[I] <> nil then
+    begin
+      Category := TCategory(cbCat.Items.Objects[I]);
+      if UTF8CompareText(Trim(Category.Name), Trim(AName)) = 0 then
+      begin
+        cbCat.ItemIndex := I;
+        Exit;
+      end;
+    end;
+  ExternalCategoryIndex := cbCat.Items.Add(Trim(AName));
+  cbCat.ItemIndex := ExternalCategoryIndex;
+end;
+
+procedure TBookDlgHelper.UpdateCoverPreview;
+var
+  FileName: string;
+  ImageData: TLazIntfImage;
+  Reader: TFPCustomImageReader;
+begin
+  if (CoverPreview = nil) or (CoverPlaceholder = nil) then
+    Exit;
+  FileName := Trim(eCover.Text);
+  if (FileName = '') and (Book <> nil) and (Book.CoverFile <> '') then
+    FileName := DB.Paths.CoversDir + Book.CoverFile
+  else if (FileName <> '') and not FileExists(FileName) and
+    (ExtractFilePath(FileName) = '') then
+    FileName := DB.Paths.CoversDir + FileName;
+  CoverPreview.Picture.Clear;
+  CoverPlaceholder.Visible := True;
+  CoverPlaceholder.Caption := 'Нет обложки';
+  if (FileName = '') or not FileExists(FileName) then
+    Exit;
+  try
+    ImageData := TLazIntfImage.Create(0, 0);
+    try
+      if SameText(ExtractFileExt(FileName), '.png') then
+        Reader := TFPReaderPNG.Create
+      else
+        Reader := TFPReaderJPEG.Create;
+      try
+        ImageData.LoadFromFile(FileName, Reader);
+        CoverPreview.Picture.Bitmap.LoadFromIntfImage(ImageData);
+      finally
+        Reader.Free;
+      end;
+    finally
+      ImageData.Free;
+    end;
+    CoverPlaceholder.Visible := False;
+  except
+    CoverPreview.Picture.Clear;
+    CoverPlaceholder.Caption := 'Не удалось открыть обложку';
+  end;
+end;
+
+procedure TBookDlgHelper.CoverPathChange(Sender: TObject);
+begin
+  UpdateCoverPreview;
+end;
+
+procedure TBookDlgHelper.FormResize(Sender: TObject);
+begin
+  if (FieldsPanel = nil) or (CoverPanel = nil) then
+    Exit;
+  FieldsPanel.Width := Max(300, CoverPanel.Left - 8);
+end;
+
+procedure TBookDlgHelper.FormShow(Sender: TObject);
+begin
+  if (eISBN <> nil) and eISBN.CanFocus then
+  begin
+    eISBN.SetFocus;
+    eISBN.SelectAll;
+  end;
+end;
+
+procedure TBookDlgHelper.FillISBNClick(Sender: TObject);
+var
+  Data: TOpenLibraryBookData;
+  WarningText, Err, OldCaption: string;
+  OldCursor: TCursor;
+begin
+  OldCaption := btnFillISBN.Caption;
+  OldCursor := Screen.Cursor;
+  btnFillISBN.Enabled := False;
+  btnFillISBN.Caption := 'Загрузка...';
+  Screen.Cursor := crHourGlass;
+  try
+    if not LookupBookByISBN(eISBN.Text, DB.Paths.OpenLibraryCacheDir,
+      DB.Settings.GoogleBooksApiKey, Data, WarningText, Err) then
+    begin
+      MessageDlg(Err, mtError, [mbOK], 0);
+      Exit;
+    end;
+    if Data.Title <> '' then
+      eTitle.Text := Data.Title;
+    if Data.Authors <> '' then
+      eAuthors.Text := Data.Authors;
+    if Data.Year > 0 then
+      eYear.Text := IntToStr(Data.Year);
+    if Data.Publisher <> '' then
+      ePublisher.Text := Data.Publisher;
+    if Data.Description <> '' then
+      eDesc.Text := Data.Description;
+    if Data.CategoryName <> '' then
+      SelectExternalCategory(Data.CategoryName);
+    if Data.CoverCacheFile <> '' then
+      eCover.Text := Data.CoverCacheFile;
+    UpdateCoverPreview;
+    if WarningText <> '' then
+      MessageDlg('Данные книги заполнены.' + LineEnding + LineEnding +
+        WarningText, mtWarning, [mbOK], 0);
+  finally
+    Screen.Cursor := OldCursor;
+    btnFillISBN.Caption := OldCaption;
+    btnFillISBN.Enabled := True;
+  end;
+end;
+
+procedure TBookDlgHelper.ISBNKeyPress(Sender: TObject; var Key: Char);
+begin
+  if Key <> #13 then
+    Exit;
+  Key := #0;
+  FillISBNClick(Sender);
+end;
+
 procedure TBookDlgHelper.OKClick(Sender: TObject);
 var
   NewBook: TBook;
+  NewCategory: TCategory;
   Err: string;
   Year: Integer;
-  CatID: TId;
+  CatID, LocID: TId;
   Ok: Boolean;
 begin
+  if Trim(eTitle.Text) = '' then
+  begin
+    MessageDlg('Укажите название книги.', mtError, [mbOK], 0);
+    Exit;
+  end;
   Year := StrToIntDef(Trim(eYear.Text), 0);
+  LocID := 0;
+  if Book = nil then
+  begin
+    if Trim(eInv.Text) = '' then
+    begin
+      MessageDlg('Укажите инвентарный номер.', mtError, [mbOK], 0);
+      Exit;
+    end;
+    if DB.FindCopyByInv(eInv.Text) <> nil then
+    begin
+      MessageDlg('Инвентарный номер уже существует.', mtError, [mbOK], 0);
+      Exit;
+    end;
+    if (cbLoc.ItemIndex < 0) or
+      (cbLoc.Items.Objects[cbLoc.ItemIndex] = nil) then
+    begin
+      MessageDlg('Укажите место хранения.', mtError, [mbOK], 0);
+      Exit;
+    end;
+    LocID := TLocation(cbLoc.Items.Objects[cbLoc.ItemIndex]).ID;
+  end;
   CatID := 0;
   if (cbCat.ItemIndex >= 0) and (cbCat.Items.Objects[cbCat.ItemIndex] <> nil) then
     CatID := TCategory(cbCat.Items.Objects[cbCat.ItemIndex]).ID;
+  if (cbCat.ItemIndex = ExternalCategoryIndex) and
+    (ExternalCategoryIndex >= 0) then
+  begin
+    NewCategory := FindActiveCategory(cbCat.Items[ExternalCategoryIndex]);
+    if NewCategory = nil then
+      NewCategory := DB.AddCategory(cbCat.Items[ExternalCategoryIndex], '', '', Err);
+    if NewCategory = nil then
+    begin
+      MessageDlg(Err, mtError, [mbOK], 0);
+      Exit;
+    end;
+    CatID := NewCategory.ID;
+  end;
   if Book = nil then
   begin
-    NewBook := DB.AddBook(eTitle.Text, eAuthors.Text, Year, ePublisher.Text,
-      eISBN.Text, CatID, eDesc.Text, Trim(eCover.Text), Err);
+    NewBook := DB.AddBookWithInitialCopy(eTitle.Text, eAuthors.Text, Year,
+      ePublisher.Text, eISBN.Text, CatID, eDesc.Text, Trim(eCover.Text),
+      eInv.Text, LocID, Err);
     Ok := NewBook <> nil;
     if Ok then
+    begin
       ResultID := NewBook.ID;
+      SaveCardLayoutID(DB, 'Book', 'LastLocationID', LocID);
+    end;
   end
   else
   begin
@@ -517,12 +805,17 @@ end;
 function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId): Boolean;
 var
   F: TForm;
-  eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover: TEdit;
-  cbCat: TComboBox;
-  btnOK, btnCancel: TButton;
+  eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover, eInv: TEdit;
+  cbCat, cbLoc: TComboBox;
+  btnOK, btnCancel, btnFillISBN: TButton;
   Helper: TBookDlgHelper;
-  I, Y, FW: Integer;
+  FieldsPanel, CoverPanel: TPanel;
+  CoverPreview: TImage;
+  CoverPlaceholder: TLabel;
+  I, Y, FW, CoverWidth: Integer;
   C: TCategory;
+  L: TLocation;
+  LastLocationID: TId;
   CatsSL: TStringList;
 begin
   Result := False;
@@ -535,19 +828,68 @@ begin
     Helper.DB := ADB;
     Helper.Form := F;
     Helper.Book := ABook;
+    Helper.ExternalCategoryIndex := -1;
     ApplyFormUIFont(F, ADB.Settings.UIFontSize);
     PrepareCardForm(F);
     F.Caption := 'Книга';
-    F.ClientWidth := 400;
-    FW := F.ClientWidth - 32;
+    CoverWidth := 210;
+    F.ClientWidth := 680;
+    FieldsPanel := TPanel.Create(F);
+    FieldsPanel.Parent := F;
+    FieldsPanel.BevelOuter := bvNone;
+    FieldsPanel.SetBounds(0, 0, F.ClientWidth - CoverWidth - 24, 1);
+    FieldsPanel.Anchors := [akLeft, akTop, akBottom];
+    CoverPanel := TPanel.Create(F);
+    CoverPanel.Parent := F;
+    CoverPanel.Caption := 'Обложка';
+    CoverPanel.BevelOuter := bvLowered;
+    CoverPanel.SetBounds(F.ClientWidth - 16 - CoverWidth, 8, CoverWidth, 80);
+    CoverPanel.Anchors := [akTop, akRight, akBottom];
+    CoverPreview := TImage.Create(F);
+    CoverPreview.Parent := CoverPanel;
+    CoverPreview.Align := alClient;
+    CoverPreview.Center := True;
+    CoverPreview.Proportional := True;
+    CoverPreview.Stretch := True;
+    CoverPlaceholder := TLabel.Create(F);
+    CoverPlaceholder.Parent := CoverPanel;
+    CoverPlaceholder.Align := alClient;
+    CoverPlaceholder.Alignment := taCenter;
+    CoverPlaceholder.Layout := tlCenter;
+    CoverPlaceholder.Caption := 'Нет обложки';
+    CoverPlaceholder.Transparent := True;
+    FW := FieldsPanel.Width - 32;
     Y := 8;
-    InputPanel(F, 'Название *', Y, FW, eTitle);
-    InputPanel(F, 'Автор(ы)', Y, FW, eAuthors);
-    InputPanel(F, 'Год', Y, FW, eYear);
-    InputPanel(F, 'Издательство', Y, FW, ePublisher);
-    InputPanel(F, 'ISBN', Y, FW, eISBN);
-    InputPanel(F, 'Описание', Y, FW, eDesc);
-    InputCombo(F, 'Категория', Y, FW, cbCat);
+    InputPanelWithButton(FieldsPanel, 'ISBN', Y, FW, 'Заполнить', eISBN,
+      btnFillISBN);
+    eInv := nil;
+    cbLoc := nil;
+    if ABook = nil then
+    begin
+      InputPanel(FieldsPanel, 'Инвентарный номер *', Y, FW, eInv);
+      eInv.Text := ADB.SuggestNextInventoryNo;
+      InputCombo(FieldsPanel, 'Место хранения *', Y, FW, cbLoc);
+      for I := 0 to ADB.Locations.Count - 1 do
+      begin
+        L := TLocation(ADB.Locations[I]);
+        if not L.Deleted then
+          cbLoc.Items.AddObject(L.Name, L);
+      end;
+      LastLocationID := LoadCardLayoutID(ADB, 'Book', 'LastLocationID');
+      for I := 0 to cbLoc.Items.Count - 1 do
+        if (cbLoc.Items.Objects[I] <> nil) and
+          (TLocation(cbLoc.Items.Objects[I]).ID = LastLocationID) then
+        begin
+          cbLoc.ItemIndex := I;
+          Break;
+        end;
+    end;
+    InputPanel(FieldsPanel, 'Название *', Y, FW, eTitle);
+    InputPanel(FieldsPanel, 'Автор(ы)', Y, FW, eAuthors);
+    InputPanel(FieldsPanel, 'Год', Y, FW, eYear);
+    InputPanel(FieldsPanel, 'Издательство', Y, FW, ePublisher);
+    InputPanel(FieldsPanel, 'Описание', Y, FW, eDesc);
+    InputCombo(FieldsPanel, 'Категория', Y, FW, cbCat);
     cbCat.Items.AddObject('(нет)', nil);
     // Активные категории — отсортировать по наименованию (без учёта регистра)
     CatsSL := TStringList.Create;
@@ -566,17 +908,32 @@ begin
       CatsSL.Free;
     end;
     cbCat.ItemIndex := 0;
-    InputPanel(F, 'Путь к обложке (jpg/png)', Y, FW, eCover);
+    InputPanel(FieldsPanel, 'Путь к обложке (jpg/png)', Y, FW, eCover);
+    FieldsPanel.Height := Y;
     PlaceDialogButtons(F, Y, btnOK, btnCancel);
+    CoverPanel.Height := Max(80, btnOK.Top - CoverPanel.Top - 8);
     Helper.eTitle := eTitle;
     Helper.eAuthors := eAuthors;
     Helper.eYear := eYear;
     Helper.ePublisher := ePublisher;
     Helper.eISBN := eISBN;
+    Helper.eInv := eInv;
+    Helper.btnFillISBN := btnFillISBN;
     Helper.eDesc := eDesc;
     Helper.eCover := eCover;
     Helper.cbCat := cbCat;
+    Helper.cbLoc := cbLoc;
+    Helper.FieldsPanel := FieldsPanel;
+    Helper.CoverPanel := CoverPanel;
+    Helper.CoverPreview := CoverPreview;
+    Helper.CoverPlaceholder := CoverPlaceholder;
+    Helper.btnOK := btnOK;
+    btnFillISBN.OnClick := @Helper.FillISBNClick;
+    eISBN.OnKeyPress := @Helper.ISBNKeyPress;
+    eCover.OnChange := @Helper.CoverPathChange;
     btnOK.OnClick := @Helper.OKClick;
+    F.OnResize := @Helper.FormResize;
+    F.OnShow := @Helper.FormShow;
     LoadCardFormSize(ADB, F, 'Book');
     if ABook <> nil then
     begin
@@ -591,6 +948,8 @@ begin
            (TCategory(cbCat.Items.Objects[I]).ID = ABook.CategoryID) then
           cbCat.ItemIndex := I;
     end;
+    Helper.FormResize(nil);
+    Helper.UpdateCoverPreview;
     if F.ShowModal <> mrOK then
       Exit;
     if Helper.Saved then
@@ -1261,7 +1620,7 @@ end;
 
 procedure TRecognizedImportDlgHelper.SaveClick(Sender: TObject);
 var
-  I, SavedCount: Integer;
+  I, SavedCount, YearValue: Integer;
   Item: TRecognizedBook;
   ValidItems: TList;
   Seen, Errors: TStringList;
@@ -1284,10 +1643,21 @@ begin
       Item := TRecognizedBook(Items[I]);
       Item.Title := Trim(Grid.Cells[0, I + 1]);
       Item.InventoryNo := Trim(Grid.Cells[1, I + 1]);
+      Item.Authors := Trim(Grid.Cells[2, I + 1]);
+      Item.Year := Trim(Grid.Cells[3, I + 1]);
+      Item.Publisher := Trim(Grid.Cells[4, I + 1]);
+      Item.ISBN := Trim(Grid.Cells[5, I + 1]);
+      Item.Description := Trim(Grid.Cells[6, I + 1]);
+      Item.CategoryName := Trim(Grid.Cells[7, I + 1]);
       if Item.Title = '' then
         Errors.Add('Строка ' + IntToStr(I + 1) + ': не указано наименование.')
       else if Item.InventoryNo = '' then
         Errors.Add('Строка ' + IntToStr(I + 1) + ': не указан инвентарный номер.')
+      else if (Item.Year <> '') and
+              ((not TryStrToInt(Item.Year, YearValue)) or
+               (YearValue < 1) or (YearValue > 9999)) then
+        Errors.Add('Строка ' + IntToStr(I + 1) +
+          ': год должен быть целым числом от 1 до 9999.')
       else if Seen.IndexOf(Item.InventoryNo) >= 0 then
         Errors.Add('Строка ' + IntToStr(I + 1) + ': повторяющийся инв. номер «' + Item.InventoryNo + '».')
       else if DB.FindCopyByInv(Item.InventoryNo) <> nil then
@@ -1330,19 +1700,20 @@ begin
 end;
 
 function ImportRecognizedBooksDialog(ADB: TLibraryDB; AItems: TList;
-  AFailures: TStrings): Boolean;
+  AFailures: TStrings; const AStats: TRecognitionStats): Boolean;
 var
   F: TForm;
   Helper: TRecognizedImportDlgHelper;
   Grid: TStringGrid;
   Location: TComboBox;
   Problems: TMemo;
-  lblTable, lblLocation, lblProblems: TLabel;
+  lblTable, lblStats, lblLocation, lblProblems: TLabel;
   btnSave, btnCancel: TButton;
-  I: Integer;
+  I, Y, TextH, FieldH: Integer;
   Item: TRecognizedBook;
   Loc: TLocation;
   SavedFailures: TStringList;
+  CostText, ModelsText: string;
 begin
   Result := False;
   if (AItems = nil) or (AItems.Count = 0) then
@@ -1356,57 +1727,86 @@ begin
     ApplyFormUIFont(F, ADB.Settings.UIFontSize);
     PrepareCardForm(F);
     F.Caption := 'Результаты распознавания';
-    F.ClientWidth := 760;
-    F.ClientHeight := 480;
-    F.Constraints.MinWidth := 600;
-    F.Constraints.MinHeight := 360;
+    F.ClientWidth := 1080;
+    F.ClientHeight := 650;
+    F.Constraints.MinWidth := 720;
+    F.Constraints.MinHeight := 620;
+    TextH := F.Canvas.TextHeight('Ag');
+    FieldH := TextH + 12;
 
     lblTable := TLabel.Create(F);
     lblTable.Parent := F;
     lblTable.Caption := 'Проверьте и при необходимости исправьте распознанные данные:';
-    lblTable.SetBounds(16, 14, 600, F.Canvas.TextHeight('Ag') + 4);
+    lblTable.SetBounds(16, 14, F.ClientWidth - 32, TextH + 4);
 
     Grid := TStringGrid.Create(F);
     Grid.Parent := F;
-    Grid.SetBounds(16, 38, F.ClientWidth - 32, 210);
+    Grid.SetBounds(16, lblTable.Top + lblTable.Height + 8,
+      F.ClientWidth - 32, 270);
     Grid.Anchors := [akLeft, akTop, akRight];
-    Grid.ColCount := 5;
+    Grid.ColCount := 8;
     Grid.RowCount := AItems.Count + 1;
     Grid.FixedRows := 1;
     Grid.FixedCols := 0;
     Grid.Options := Grid.Options + [goEditing, goAlwaysShowEditor, goColSizing];
     Grid.Cells[0, 0] := 'Наименование';
     Grid.Cells[1, 0] := 'Инв. номер';
-    Grid.Cells[2, 0] := 'Модель';
-    Grid.Cells[3, 0] := 'Токены (всего; вход/выход)';
-    Grid.Cells[4, 0] := 'Стоимость';
+    Grid.Cells[2, 0] := 'Автор(ы)';
+    Grid.Cells[3, 0] := 'Год';
+    Grid.Cells[4, 0] := 'Издательство';
+    Grid.Cells[5, 0] := 'ISBN';
+    Grid.Cells[6, 0] := 'Описание';
+    Grid.Cells[7, 0] := 'Категория';
     Grid.ColWidths[0] := 260;
-    Grid.ColWidths[1] := 100;
-    Grid.ColWidths[2] := 220;
-    Grid.ColWidths[3] := 170;
-    Grid.ColWidths[4] := 90;
+    Grid.ColWidths[1] := 110;
+    Grid.ColWidths[2] := 180;
+    Grid.ColWidths[3] := 75;
+    Grid.ColWidths[4] := 170;
+    Grid.ColWidths[5] := 130;
+    Grid.ColWidths[6] := 260;
+    Grid.ColWidths[7] := 160;
     for I := 0 to AItems.Count - 1 do
     begin
       Item := TRecognizedBook(AItems[I]);
       Grid.Cells[0, I + 1] := Item.Title;
       Grid.Cells[1, I + 1] := Item.InventoryNo;
-      Grid.Cells[2, I + 1] := Item.ModelUsed;
-      Grid.Cells[3, I + 1] := Format('%d; %d/%d', [Item.TotalTokens,
-        Item.PromptTokens, Item.CompletionTokens]);
-      if Item.RecognitionCost > 0 then
-        Grid.Cells[4, I + 1] := Format('$%.6f', [Item.RecognitionCost])
-      else
-        Grid.Cells[4, I + 1] := '—';
+      Grid.Cells[2, I + 1] := Item.Authors;
+      Grid.Cells[3, I + 1] := Item.Year;
+      Grid.Cells[4, I + 1] := Item.Publisher;
+      Grid.Cells[5, I + 1] := Item.ISBN;
+      Grid.Cells[6, I + 1] := Item.Description;
+      Grid.Cells[7, I + 1] := Item.CategoryName;
     end;
 
+    ModelsText := Trim(AStats.Models);
+    if ModelsText = '' then
+      ModelsText := '—';
+    if AStats.HasCost then
+      CostText := Format('$%.6f', [AStats.RecognitionCost])
+    else
+      CostText := '—';
+    Y := Grid.Top + Grid.Height + 10;
+    lblStats := TLabel.Create(F);
+    lblStats.Parent := F;
+    lblStats.AutoSize := False;
+    lblStats.WordWrap := True;
+    lblStats.Caption := 'Модель: ' + ModelsText + LineEnding +
+      Format('Токены: всего %d; вход %d; выход %d', [AStats.TotalTokens,
+        AStats.PromptTokens, AStats.CompletionTokens]) + LineEnding +
+      'Стоимость: ' + CostText;
+    lblStats.SetBounds(16, Y, F.ClientWidth - 32, TextH * 3 + 8);
+    lblStats.Anchors := [akLeft, akTop, akRight];
+
+    Y := lblStats.Top + lblStats.Height + 10;
     lblLocation := TLabel.Create(F);
     lblLocation.Parent := F;
     lblLocation.Caption := 'Место хранения для всех экземпляров *';
-    lblLocation.SetBounds(16, 264, 360, F.Canvas.TextHeight('Ag') + 4);
+    lblLocation.SetBounds(16, Y, 360, TextH + 4);
 
     Location := TComboBox.Create(F);
     Location.Parent := F;
-    Location.SetBounds(16, 286, F.ClientWidth - 32, F.Canvas.TextHeight('Ag') + 12);
+    Location.SetBounds(16, lblLocation.Top + lblLocation.Height + 4,
+      F.ClientWidth - 32, FieldH);
     Location.Anchors := [akLeft, akTop, akRight];
     Location.Style := csDropDown;
     for I := 0 to ADB.Locations.Count - 1 do
@@ -1416,14 +1816,17 @@ begin
         Location.Items.Add(Loc.Name);
     end;
 
+    Y := Location.Top + Location.Height + 10;
     lblProblems := TLabel.Create(F);
     lblProblems.Parent := F;
     lblProblems.Caption := 'Не распознано или исключено из сохранения:';
-    lblProblems.SetBounds(16, 326, 500, F.Canvas.TextHeight('Ag') + 4);
+    lblProblems.SetBounds(16, Y, 500, TextH + 4);
 
     Problems := TMemo.Create(F);
     Problems.Parent := F;
-    Problems.SetBounds(16, 348, F.ClientWidth - 32, 82);
+    Problems.SetBounds(16, lblProblems.Top + lblProblems.Height + 4,
+      F.ClientWidth - 32, F.ClientHeight -
+      (lblProblems.Top + lblProblems.Height + 4) - 52);
     Problems.Anchors := [akLeft, akTop, akRight, akBottom];
     Problems.ReadOnly := True;
     Problems.ScrollBars := ssVertical;

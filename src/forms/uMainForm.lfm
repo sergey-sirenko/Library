@@ -83,6 +83,15 @@ object MainForm: TMainForm
           OnClick = btnBookRecognizeClick
           TabOrder = 7
         end
+        object btnBookRecognizeText: TBitBtn
+          Left = 1070
+          Height = 28
+          Top = 8
+          Width = 160
+          Caption = 'Распознать текст'
+          OnClick = btnBookRecognizeTextClick
+          TabOrder = 8
+        end
         object btnBookEdit: TBitBtn
           Left = 578
           Height = 28
@@ -111,13 +120,13 @@ object MainForm: TMainForm
           TabOrder = 6
         end
         object chkShowDeleted: TCheckBox
-          Left = 1070
+          Left = 1238
           Height = 24
           Top = 10
           Width = 76
           Caption = 'Удалённые'
           OnChange = chkShowDeletedChange
-          TabOrder = 8
+          TabOrder = 9
         end
       end
       object gridBooks: TStringGrid
@@ -788,6 +797,21 @@ object MainForm: TMainForm
           Width = 400
           PasswordChar = '*'
           TabOrder = 7
+        end
+        object lblGoogleBooksApiKey: TLabel
+          Left = 24
+          Height = 15
+          Top = 188
+          Width = 180
+          Caption = 'Google Books API Key'
+        end
+        object edtGoogleBooksApiKey: TEdit
+          Left = 24
+          Height = 28
+          Top = 208
+          Width = 400
+          PasswordChar = '*'
+          TabOrder = 12
         end
         object btnTestOpenRouter: TBitBtn
           Left = 24

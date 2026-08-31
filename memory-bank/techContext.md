@@ -4,22 +4,23 @@
 
 - Free Pascal 3.2.2, Lazarus 3.x/4.x, LCL, RTL, FCL и LazUtils.
 - Целевая платформа: `x86_64-win64`.
-- Репозиторий: `C:\Users\Sergey\source\repos\Library`.
-- Lazarus: `C:\Users\Sergey\AppData\Local\lazarus`.
 - Сторонние runtime-DLL, ORM и СУБД не используются.
+- Единственный канонический путь Lazarus в текущем окружении:
+  `C:\Users\Sergey\AppData\Local\lazarus\lazbuild.exe`.
 
-## Проекты и каталоги
+## Структура
 
 - `Library.lpi`, `LibraApp.lpr` — основное приложение.
 - `LibraryUpdater.lpi`, `LibraryUpdater.lpr` — помощник обновления.
 - `src/` — модули, `src/forms/` — формы, `tests/` — тестовые проекты.
-- `Prog/` — рабочие EXE и runtime-окружение, `lib/` — результаты компиляции,
-  `dist/` — игнорируемые release-артефакты.
-- `Data/`, `Covers/`, `Backup/`, `Logs/` — пользовательские данные и журналы.
+- `docs/` — техническое задание и пользовательские инструкции.
+- `Prog/` — рабочие EXE и runtime-окружение.
+- `lib/` — результаты компиляции; `dist/` — release-артефакты.
+- Версия приложения задаётся `APP_VERSION` в `src/uTypes.pas`.
 
-## Сборка и тесты
+## Команды
 
-Основной проект:
+Основное приложение:
 
 ```powershell
 & 'C:\Users\Sergey\AppData\Local\lazarus\lazbuild.exe' 'C:\Users\Sergey\source\repos\Library\Library.lpi'
@@ -31,22 +32,19 @@
 & '.\scripts\Build-Release.ps1'
 ```
 
-Скрипт собирает основное приложение, updater, `UpdaterTests` и `UpdaterProbe`,
-проверяет версии, JSON релиза, SHA-256, состав ZIP, успешную замену и откат.
-`-AllowDirty` используется только для промежуточной разработки.
+`-AllowDirty` допустим только для промежуточной локальной проверки, но не для
+выпуска версии.
 
-## Хранение и сеть
+## Матрица проверок
 
-- `Data\*.dat` — бинарные сущности; `Data\*.idx` — собственные индексы.
-- Хеш пароля реализован стандартным модулем `sha1` FPC.
-- HTTPS выполняется через `winhttp.dll`/SChannel.
-- GitHub endpoint обновлений:
-  `https://api.github.com/repos/sergey-sirenko/Library/releases/latest`.
+| Изменение | Обязательная проверка |
+|---|---|
+| Только Markdown и правила LLM | Ссылки, согласованность, `git diff --check`; сборка не требуется |
+| `.pas`, `.lpr`, `.lfm`, `.lpi` | Сборка затронутого проекта, результат `0 errors` |
+| Updater или release-процесс | `scripts/Build-Release.ps1`; при разработке допустим `-AllowDirty` |
+| UI и бизнес-сценарии | Сборка плюс ручная проверка затронутого сценария |
 
-## Релизы
-
-- Версия задаётся константой `APP_VERSION` в `src/uTypes.pas`.
-- Тег: `v<версия>`; архив: `dist/Library-v<версия>-win64.zip`.
-- В релиз прикладываются ZIP и `Library-v<версия>-win64.zip.sha256`.
-- Публикуются только стабильные релизы; draft и prerelease клиент игнорирует.
-- После публикации проверяются публичный API, имя asset, размер и GitHub digest.
+Release-скрипт собирает основное приложение, updater, `UpdaterTests` и
+`UpdaterProbe`, затем проверяет версии, JSON, SHA-256, установку, откат и состав
+архива. Если `Prog/Library.exe` занят запущенным приложением, перед сборкой его
+нужно закрыть.

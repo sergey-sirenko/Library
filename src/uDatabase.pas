@@ -83,7 +83,9 @@ type
     function BookHasLoanedCopies(ABookID: TId): Boolean;
     function CategoryHasBooks(ACategoryID: TId): Boolean;
     function LocationHasCopies(ALocationID: TId): Boolean;
+    function FindBookByISBN(const AISBN: string; AExcludeID: TId): TBook;
     function FindCopyByInventory(const AInv: string; AExcludeID: TId): TCopy;
+    function FindActiveCategoryByName(const AName: string): TCategory;
     function FindActiveLocationByName(const AName: string): TLocation;
   public
     constructor Create(const ARoot: string = '');
@@ -105,6 +107,10 @@ type
 
     function AddBook(const ATitle, AAuthors: string; AYear: Integer;
       const APublisher, AISBN: string; ACategoryID: TId; const ADesc, ACoverSrc: string;
+      out AError: string): TBook;
+    function AddBookWithInitialCopy(const ATitle, AAuthors: string;
+      AYear: Integer; const APublisher, AISBN: string; ACategoryID: TId;
+      const ADesc, ACoverSrc, AInventoryNo: string; ALocationID: TId;
       out AError: string): TBook;
     function UpdateBook(ABook: TBook; const ATitle, AAuthors: string; AYear: Integer;
       const APublisher, AISBN: string; ACategoryID: TId; const ADesc, ACoverSrc: string;
@@ -142,7 +148,7 @@ type
 
     function UpdateSettings(const ALibName: string; ALoanDays, AMaxBooks, AMaxRenew: Integer;
       AAutoBackup: Boolean; AUIFontSize: Integer; AInventoryStartNo: Int64;
-      const AOpenRouterModel, AOpenRouterApiKey: string;
+      const AOpenRouterModel, AOpenRouterApiKey, AGoogleBooksApiKey: string;
       out AError: string): Boolean;
 
     function ImportRecognizedBooks(AItems: TList; const ALocationName: string;
@@ -188,7 +194,7 @@ type
 implementation
 
 uses
-  FileUtil, DateUtils, StrUtils;
+  FileUtil, DateUtils, StrUtils, LazUTF8;
 
 constructor TLibraryDB.Create(const ARoot: string);
 begin
@@ -246,6 +252,7 @@ begin
   FSettings.InventoryStartNo := DEFAULT_INVENTORY_START_NO;
   FSettings.OpenRouterModel := '';
   FSettings.OpenRouterApiKey := '';
+  FSettings.GoogleBooksApiKey := '';
   SetDefaultOpenRouterFavoriteModels;
   FNextBookID := 1;
   FNextCopyID := 1;
@@ -951,8 +958,9 @@ begin
     WriteInteger(Payload, FSettings.OpenRouterFavoriteModels.Count);
     for i := 0 to FSettings.OpenRouterFavoriteModels.Count - 1 do
       WriteString(Payload, FSettings.OpenRouterFavoriteModels[i]);
+    WriteString(Payload, FSettings.GoogleBooksApiKey);
     CRC := CalcCRC32(Payload, 0, Payload.Size);
-    FillDataHeader(H, 1, 5, CRC);
+    FillDataHeader(H, 1, 6, CRC);
     S.WriteBuffer(H, SizeOf(H));
     Payload.Position := 0;
     S.CopyFrom(Payload, Payload.Size);
@@ -1009,6 +1017,11 @@ begin
   end
   else
     SetDefaultOpenRouterFavoriteModels;
+  { NextID >= 6 — ключ Google Books. }
+  if (H.NextID >= 6) and ((S.Size - S.Position) >= SizeOf(LongWord)) then
+    FSettings.GoogleBooksApiKey := ReadString(S)
+  else
+    FSettings.GoogleBooksApiKey := '';
 end;
 
 procedure TLibraryDB.SetDefaultOpenRouterFavoriteModels;
@@ -1353,6 +1366,23 @@ begin
   Result := nil;
 end;
 
+function TLibraryDB.FindActiveCategoryByName(const AName: string): TCategory;
+var
+  I: Integer;
+  C: TCategory;
+begin
+  for I := 0 to FCategories.Count - 1 do
+  begin
+    C := TCategory(FCategories[I]);
+    if (not C.Deleted) and (UTF8CompareText(C.Name, Trim(AName)) = 0) then
+    begin
+      Result := C;
+      Exit;
+    end;
+  end;
+  Result := nil;
+end;
+
 function TLibraryDB.FindUser(AID: TId): TUser;
 begin
   Result := TUser(FUsers.FindByID(AID));
@@ -1371,6 +1401,33 @@ begin
       Result := C;
       Exit;
     end;
+  end;
+  Result := nil;
+end;
+
+function NormalizeISBNForCompare(const AISBN: string): string;
+begin
+  Result := UpperCase(Trim(AISBN));
+  Result := StringReplace(Result, '-', '', [rfReplaceAll]);
+  Result := StringReplace(Result, ' ', '', [rfReplaceAll]);
+end;
+
+function TLibraryDB.FindBookByISBN(const AISBN: string;
+  AExcludeID: TId): TBook;
+var
+  I: Integer;
+  B: TBook;
+  ISBNKey: string;
+begin
+  ISBNKey := NormalizeISBNForCompare(AISBN);
+  if ISBNKey = '' then
+    Exit(nil);
+  for I := 0 to FBooks.Count - 1 do
+  begin
+    B := TBook(FBooks[I]);
+    if (B.ID <> AExcludeID) and
+      (NormalizeISBNForCompare(B.ISBN) = ISBNKey) then
+      Exit(B);
   end;
   Result := nil;
 end;
@@ -1828,6 +1885,72 @@ begin
   SaveBooks;
   AppendAction(atCreate, okBook, B.ID, 'Добавлена книга: ' + B.Title, '', B.Title);
   Result := B;
+end;
+
+function TLibraryDB.AddBookWithInitialCopy(const ATitle, AAuthors: string;
+  AYear: Integer; const APublisher, AISBN: string; ACategoryID: TId;
+  const ADesc, ACoverSrc, AInventoryNo: string; ALocationID: TId;
+  out AError: string): TBook;
+var
+  B: TBook;
+  C: TCopy;
+  L: TLocation;
+begin
+  Result := nil;
+  AError := '';
+  if Trim(ATitle) = '' then
+  begin
+    AError := 'Укажите название книги.';
+    Exit;
+  end;
+  if (ACategoryID <> 0) and
+    ((FindCategory(ACategoryID) = nil) or FindCategory(ACategoryID).Deleted) then
+  begin
+    AError := 'Указанная категория не найдена.';
+    Exit;
+  end;
+  if FindBookByISBN(AISBN, 0) <> nil then
+  begin
+    AError := 'Книга с таким ISBN уже существует.';
+    Exit;
+  end;
+  if Trim(AInventoryNo) = '' then
+  begin
+    AError := 'Укажите инвентарный номер.';
+    Exit;
+  end;
+  if FindCopyByInventory(AInventoryNo, 0) <> nil then
+  begin
+    AError := 'Инвентарный номер уже существует.';
+    Exit;
+  end;
+  L := FindLocation(ALocationID);
+  if (L = nil) or L.Deleted then
+  begin
+    AError := 'Укажите место хранения.';
+    Exit;
+  end;
+
+  BeginTxn(['Books.dat', 'Copies.dat']);
+  try
+    B := AddBook(ATitle, AAuthors, AYear, APublisher, AISBN, ACategoryID,
+      ADesc, ACoverSrc, AError);
+    if B = nil then
+      raise Exception.Create(AError);
+    C := AddCopy(B.ID, AInventoryNo, DEFAULT_COPY_CONDITION, ALocationID,
+      '', Date, AError);
+    if C = nil then
+      raise Exception.Create(AError);
+    CommitTxn;
+    Result := B;
+  except
+    on E: Exception do
+    begin
+      RecoverTxnIfNeeded;
+      AError := 'Не удалось сохранить книгу и экземпляр: ' + E.Message;
+      Result := nil;
+    end;
+  end;
 end;
 
 function TLibraryDB.UpdateBook(ABook: TBook; const ATitle, AAuthors: string; AYear: Integer;
@@ -2482,10 +2605,11 @@ end;
 function TLibraryDB.ImportRecognizedBooks(AItems: TList; const ALocationName: string;
   out ASavedCount: Integer; out AError: string): Boolean;
 var
-  I: Integer;
+  I, YearValue: Integer;
   Item: TRecognizedBook;
   Seen: TStringList;
   Loc: TLocation;
+  Category: TCategory;
   Book: TBook;
   CopyItem: TCopy;
   Err: string;
@@ -2532,11 +2656,19 @@ begin
         AError := 'Инвентарный номер уже существует: ' + Trim(Item.InventoryNo) + '.';
         Exit;
       end;
+      if (Trim(Item.Year) <> '') and
+         ((not TryStrToInt(Trim(Item.Year), YearValue)) or
+          (YearValue < 1) or (YearValue > 9999)) then
+      begin
+        AError := 'Укажите корректный год от 1 до 9999 для книги «' +
+          Trim(Item.Title) + '».';
+        Exit;
+      end;
       Seen.Add(Trim(Item.InventoryNo));
     end;
 
     Loc := FindActiveLocationByName(ALocationName);
-    BeginTxn(['Locations.dat', 'Books.dat', 'Copies.dat']);
+    BeginTxn(['Categories.dat', 'Locations.dat', 'Books.dat', 'Copies.dat']);
     try
       if Loc = nil then
       begin
@@ -2547,7 +2679,24 @@ begin
       for I := 0 to AItems.Count - 1 do
       begin
         Item := TRecognizedBook(AItems[I]);
-        Book := AddBook(Item.Title, '', 0, '', '', 0, '', '', Err);
+        Category := nil;
+        if Trim(Item.CategoryName) <> '' then
+        begin
+          Category := FindActiveCategoryByName(Item.CategoryName);
+          if Category = nil then
+          begin
+            Category := AddCategory(Trim(Item.CategoryName), '', '', Err);
+            if Category = nil then
+              raise Exception.Create(Err);
+          end;
+        end;
+        YearValue := StrToIntDef(Trim(Item.Year), 0);
+        if Category <> nil then
+          Book := AddBook(Item.Title, Item.Authors, YearValue, Item.Publisher,
+            Item.ISBN, Category.ID, Item.Description, '', Err)
+        else
+          Book := AddBook(Item.Title, Item.Authors, YearValue, Item.Publisher,
+            Item.ISBN, 0, Item.Description, '', Err);
         if Book = nil then
           raise Exception.Create(Err);
         CopyItem := AddCopy(Book.ID, Item.InventoryNo, DEFAULT_COPY_CONDITION,
@@ -2561,6 +2710,7 @@ begin
     except
       on E: Exception do
       begin
+        RecoverTxnIfNeeded;
         AError := 'Не удалось сохранить импорт: ' + E.Message;
         ASavedCount := 0;
       end;
@@ -2572,7 +2722,7 @@ end;
 
 function TLibraryDB.UpdateSettings(const ALibName: string; ALoanDays, AMaxBooks, AMaxRenew: Integer;
   AAutoBackup: Boolean; AUIFontSize: Integer; AInventoryStartNo: Int64;
-  const AOpenRouterModel, AOpenRouterApiKey: string;
+  const AOpenRouterModel, AOpenRouterApiKey, AGoogleBooksApiKey: string;
   out AError: string): Boolean;
 begin
   Result := False;
@@ -2594,6 +2744,7 @@ begin
     FSettings.InventoryStartNo := AInventoryStartNo;
   FSettings.OpenRouterModel := Trim(AOpenRouterModel);
   FSettings.OpenRouterApiKey := Trim(AOpenRouterApiKey);
+  FSettings.GoogleBooksApiKey := Trim(AGoogleBooksApiKey);
   SaveSettings;
   AppendAction(atSettings, okSettings, 0, 'Изменены настройки', '', '');
   Result := True;
@@ -2824,6 +2975,17 @@ begin
         if B.Deleted and (not AIncludeDeleted) then Continue;
         if AOut.IndexOf(B) < 0 then AOut.Add(B);
       end;
+      if AIncludeDeleted then
+        for I := 0 to FBooks.Count - 1 do
+        begin
+          B := TBook(FBooks[I]);
+          if not B.Deleted then Continue;
+          if (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Title)) = 0) and
+             (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Authors)) = 0) and
+             (Pos(NormalizeKey(TitleQ), NormalizeKey(B.ISBN)) = 0) then
+            Continue;
+          if AOut.IndexOf(B) < 0 then AOut.Add(B);
+        end;
     end;
 
     { 2) поиск по инвентарному номеру экземпляра.
@@ -2844,6 +3006,16 @@ begin
         if B.Deleted and (not AIncludeDeleted) then Continue;
         if AOut.IndexOf(B) < 0 then AOut.Add(B);
       end;
+      if AIncludeDeleted then
+        for I := 0 to FCopies.Count - 1 do
+        begin
+          C := TCopy(FCopies[I]);
+          if not C.Deleted then Continue;
+          if Pos(InvQLow, LowerCase(C.InventoryNo)) = 0 then Continue;
+          B := FindBook(C.BookID);
+          if B = nil then Continue;
+          if AOut.IndexOf(B) < 0 then AOut.Add(B);
+        end;
     end;
   finally
     CopyIDs.Free;

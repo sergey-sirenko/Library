@@ -5,16 +5,21 @@ unit uOpenRouter;
 interface
 
 uses
-  SysUtils, uEntities;
+  Classes, SysUtils, Contnrs, uEntities;
 
 const
   OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
+  MAX_TEXT_RECOGNITION_BOOKS = 100;
 
 { Низкоуровневый HTTP-вызов через WinHTTP (SChannel, без сторонних DLL).
   Используется также модулем uOpenRouterModels. }
 function HttpRequest(const AMethod, AUrl, AApiKey, ARequestBody: string;
   out AStatusCode: DWORD; out AResponseBody: string; out AError: string;
   const ATimeoutMs: Cardinal = 0): Boolean;
+
+{ Возвращает путь вместе со строкой запроса, который должен быть передан
+  WinHttpOpenRequest. Фрагмент URL (#...) на сервер не отправляется. }
+function HttpRequestTarget(const AUrl: string): string;
 
 { Достаёт error.message из JSON-ответа OpenRouter (если есть). Пустая строка,
   если тело не JSON или поле отсутствует. }
@@ -24,16 +29,30 @@ function TestOpenRouterConnection(const AApiKey, AModel: string; out AError: str
   out AModelsCount: Integer; out AModelAvailable: Boolean): Boolean;
 
 function RecognizeBookImage(const AFileName, AModel, AApiKey: string;
-  out ABook: TRecognizedBook; out AError: string): Boolean;
+  out ABook: TRecognizedBook; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
+function RecognizeBooksTextFile(const AFileName, AModel, AApiKey: string;
+  ABooks: TObjectList; out AStats: TRecognitionStats; out AError: string): Boolean;
+
+{ Чистые функции разбора и проверки используются также автотестами. }
+function ParseBookImageResponse(const AResponse: string; out ABook: TRecognizedBook;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
+function ParseBooksTextResponse(const AResponse: string; ABooks: TObjectList;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
+function LoadRecognitionTextFile(const AFileName: string; out AText: string;
+  out AError: string): Boolean;
+function ValidateRecognitionText(const AText: string; out AError: string): Boolean;
 
 implementation
 
 uses
-  Classes, Windows, WinHttp, fpjson, jsonparser, base64;
+  Windows, WinHttp, fpjson, jsonparser, base64, LConvEncoding, LazUTF8,
+  StrUtils;
 
 const
   OPENROUTER_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions';
-  HTTP_USER_AGENT = 'LibraryApp/1.1.1';
+  HTTP_USER_AGENT =
+    'LibraryApp/1.1.1 (+https://github.com/sergey-sirenko/Library)';
 
 { В WinHttp.pas из поставки Lazarus отсутствует это объявление, хотя функция
   доступна в системной winhttp.dll. }
@@ -63,6 +82,38 @@ begin
     else
       Result := 'код ошибки ' + IntToStr(ACode);
   end;
+end;
+
+function HttpRequestTarget(const AUrl: string): string;
+var
+  SchemePos, AuthorityStart, PathPos, QueryPos, FragmentPos, StartPos: SizeInt;
+begin
+  Result := '/';
+  SchemePos := Pos('://', AUrl);
+  if SchemePos > 0 then
+    AuthorityStart := SchemePos + 3
+  else
+    AuthorityStart := 1;
+  PathPos := PosEx('/', AUrl, AuthorityStart);
+  QueryPos := PosEx('?', AUrl, AuthorityStart);
+  if (PathPos > 0) and ((QueryPos = 0) or (PathPos < QueryPos)) then
+    StartPos := PathPos
+  else if QueryPos > 0 then
+  begin
+    Result := '/';
+    StartPos := QueryPos;
+  end
+  else
+    Exit;
+  if StartPos = QueryPos then
+    Result := Result + Copy(AUrl, StartPos, MaxInt)
+  else
+    Result := Copy(AUrl, StartPos, MaxInt);
+  FragmentPos := Pos('#', Result);
+  if FragmentPos > 0 then
+    SetLength(Result, FragmentPos - 1);
+  if Result = '' then
+    Result := '/';
 end;
 
 { Достаёт message из JSON-ответа OpenRouter вида error.message. }
@@ -104,7 +155,7 @@ function HttpRequest(const AMethod, AUrl, AApiKey, ARequestBody: string;
 var
   Session, Connect, Request: HINTERNET;
   UC: URL_COMPONENTS;
-  Host, Path: WideString;
+  Host, Path, WideUrl: WideString;
   Method, WHeaders: WideString;
   IsHTTPS: Boolean;
   Port: INTERNET_PORT;
@@ -131,20 +182,18 @@ begin
     FillChar(UC, SizeOf(UC), 0);
     UC.dwStructSize := SizeOf(UC);
     SetLength(Host, 256);
-    SetLength(Path, 2048);
+    WideUrl := UTF8Decode(AUrl);
     UC.lpszHostName := PWideChar(Host);
     UC.dwHostNameLength := Length(Host);
-    UC.lpszUrlPath := PWideChar(Path);
-    UC.dwUrlPathLength := Length(Path);
     Method := UTF8Decode(AMethod);
-    if not WinHttpCrackUrl(PWideChar(UTF8Decode(AUrl)), Length(AUrl), 0, @UC) then
+    if not WinHttpCrackUrl(PWideChar(WideUrl), Length(WideUrl), 0, @UC) then
     begin
       ErrCode := GetLastError;
       AError := 'Разбор URL: ' + WinHttpErrorText(ErrCode) + '.';
       Exit;
     end;
     SetLength(Host, UC.dwHostNameLength);
-    SetLength(Path, UC.dwUrlPathLength);
+    Path := UTF8Decode(HttpRequestTarget(AUrl));
     IsHTTPS := UC.nScheme = INTERNET_SCHEME_HTTPS;
     Port := UC.nPort;
     if Port = 0 then
@@ -315,71 +364,356 @@ end;
 function RecognitionPrompt: string;
 begin
   Result :=
-    'Распознай фотографию библиотечной книги. Определи название книги по тексту ' +
-    'на странице и инвентарный номер, написанный или напечатанный на библиотечном ' +
-    'штампе. Верни только корректный JSON без Markdown и пояснений в формате ' +
-    '{"title":"...","inventoryNumber":"..."}. Если значение не удалось ' +
-    'прочитать, верни для него пустую строку.';
+    'Распознай фотографию библиотечной книги. Найди название книги и инвентарный ' +
+    'номер на библиотечном штампе, а также автора или авторов, год издания, ' +
+    'издательство, ISBN, краткое описание и категорию, если они видны. Верни ' +
+    'только корректный JSON без Markdown и пояснений в формате ' +
+    '{"title":"","inventoryNumber":"","authors":"","year":"",' +
+    '"publisher":"","isbn":"","description":"","category":""}. ' +
+    'Не выдумывай отсутствующие данные: неизвестные значения оставляй пустыми.';
 end;
 
-function ExtractRecognition(const AResponse: string; out ABook: TRecognizedBook;
-  out AError: string): Boolean;
+function TextRecognitionPrompt(const AText: string): string;
+begin
+  Result :=
+    'Преобразуй таблицу, полученную после диктовки данных библиотечных книг, в ' +
+    'структурированные записи. Первая непустая строка содержит заголовки, порядок ' +
+    'колонок произвольный. Разделителями служат точка с запятой, табуляция или ' +
+    'вертикальная черта; в отдельных строках разделители могут быть ошибочными. ' +
+    'Обязательные поля — название или наименование и инвентарный номер. Возможные ' +
+    'дополнительные поля — авторы, год, издательство, ISBN, описание и категория. ' +
+    'Исправляй только очевидные ошибки распознавания речи и разделения, сохраняй ' +
+    'исходный порядок и количество записей и не выдумывай отсутствующие данные. ' +
+    'Верни только корректный JSON без Markdown и пояснений в формате ' +
+    '{"books":[{"title":"","inventoryNumber":"","authors":"",' +
+    '"year":"","publisher":"","isbn":"","description":"",' +
+    '"category":""}]}. Текст файла:' + LineEnding + AText;
+end;
+
+function JsonFieldText(AObject: TJSONObject; const AName: string): string;
 var
-  Root, Parsed, UsageData: TJSONData;
+  Data: TJSONData;
+begin
+  Result := '';
+  if AObject = nil then
+    Exit;
+  Data := AObject.Find(AName);
+  if (Data <> nil) and (Data.JSONType <> jtNull) then
+    Result := Trim(Data.AsString);
+end;
+
+procedure FillRecognizedBook(AObject: TJSONObject; ABook: TRecognizedBook);
+begin
+  ABook.Title := JsonFieldText(AObject, 'title');
+  ABook.InventoryNo := JsonFieldText(AObject, 'inventoryNumber');
+  ABook.Authors := JsonFieldText(AObject, 'authors');
+  ABook.Year := JsonFieldText(AObject, 'year');
+  ABook.Publisher := JsonFieldText(AObject, 'publisher');
+  ABook.ISBN := JsonFieldText(AObject, 'isbn');
+  ABook.Description := JsonFieldText(AObject, 'description');
+  ABook.CategoryName := JsonFieldText(AObject, 'category');
+end;
+
+procedure ExtractRecognitionStats(ARoot: TJSONObject; out AStats: TRecognitionStats);
+var
+  UsageData, UsageValue: TJSONData;
+  UsageObj: TJSONObject;
+begin
+  ClearRecognitionStats(AStats);
+  if ARoot = nil then
+    Exit;
+  AStats.Models := Trim(ARoot.Get('model', ''));
+  UsageValue := ARoot.Find('usage');
+  if not (UsageValue is TJSONObject) then
+    Exit;
+  UsageObj := TJSONObject(UsageValue);
+  AStats.PromptTokens := UsageObj.Get('prompt_tokens', Int64(0));
+  AStats.CompletionTokens := UsageObj.Get('completion_tokens', Int64(0));
+  AStats.TotalTokens := UsageObj.Get('total_tokens', Int64(0));
+  UsageData := UsageObj.Find('cost');
+  if (UsageData <> nil) and (UsageData.JSONType <> jtNull) then
+  begin
+    AStats.RecognitionCost := UsageData.AsFloat;
+    AStats.HasCost := True;
+  end;
+end;
+
+function ParseResponseEnvelope(const AResponse: string; out ARoot,
+  AContent: TJSONData; out AStats: TRecognitionStats): Boolean;
+var
   Choices: TJSONArray;
-  RootObj, MessageObj, UsageObj: TJSONObject;
-  Content: string;
+  MessageObj, RootObj: TJSONObject;
+  ContentText: string;
+begin
+  Result := False;
+  ARoot := nil;
+  AContent := nil;
+  ClearRecognitionStats(AStats);
+  ARoot := GetJSON(AResponse);
+  if not (ARoot is TJSONObject) then
+    raise Exception.Create('Ответ не является JSON-объектом.');
+  RootObj := TJSONObject(ARoot);
+  Choices := RootObj.Arrays['choices'];
+  if (Choices = nil) or (Choices.Count = 0) or not (Choices[0] is TJSONObject) then
+    raise Exception.Create('В ответе отсутствует результат модели.');
+  MessageObj := TJSONObject(TJSONObject(Choices[0]).Objects['message']);
+  if MessageObj = nil then
+    raise Exception.Create('В ответе отсутствует сообщение модели.');
+  ContentText := Trim(MessageObj.Get('content', ''));
+  if ContentText = '' then
+    raise Exception.Create('Модель не вернула результат.');
+  AContent := GetJSON(ContentText);
+  ExtractRecognitionStats(RootObj, AStats);
+  Result := True;
+end;
+
+function ParseBookImageResponse(const AResponse: string; out ABook: TRecognizedBook;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
+var
+  Root, Content: TJSONData;
 begin
   Result := False;
   ABook := nil;
   AError := '';
   Root := nil;
-  Parsed := nil;
+  Content := nil;
+  ClearRecognitionStats(AStats);
   try
     try
-      Root := GetJSON(AResponse);
-      if not (Root is TJSONObject) then
-        raise Exception.Create('Ответ не является JSON-объектом.');
-      RootObj := TJSONObject(Root);
-      Choices := RootObj.Arrays['choices'];
-      if (Choices = nil) or (Choices.Count = 0) or not (Choices[0] is TJSONObject) then
-        raise Exception.Create('В ответе отсутствует результат модели.');
-      MessageObj := TJSONObject(TJSONObject(Choices[0]).Objects['message']);
-      if MessageObj = nil then
-        raise Exception.Create('В ответе отсутствует сообщение модели.');
-      Content := Trim(MessageObj.Get('content', ''));
-      if Content = '' then
-        raise Exception.Create('Модель не вернула результат.');
-      Parsed := GetJSON(Content);
-      if not (Parsed is TJSONObject) then
+      ParseResponseEnvelope(AResponse, Root, Content, AStats);
+      if not (Content is TJSONObject) then
         raise Exception.Create('Результат модели не является JSON-объектом.');
       ABook := TRecognizedBook.Create;
-      ABook.Title := Trim(TJSONObject(Parsed).Get('title', ''));
-      ABook.InventoryNo := Trim(TJSONObject(Parsed).Get('inventoryNumber', ''));
-      ABook.ModelUsed := Trim(RootObj.Get('model', ''));
-      UsageObj := RootObj.Objects['usage'];
-      if UsageObj <> nil then
-      begin
-        ABook.PromptTokens := UsageObj.Get('prompt_tokens', Int64(0));
-        ABook.CompletionTokens := UsageObj.Get('completion_tokens', Int64(0));
-        ABook.TotalTokens := UsageObj.Get('total_tokens', Int64(0));
-        UsageData := UsageObj.Find('cost');
-        if (UsageData <> nil) and (UsageData.JSONType <> jtNull) then
-          ABook.RecognitionCost := UsageData.AsFloat;
-      end;
-      if (ABook.Title = '') or (ABook.InventoryNo = '') then
-        raise Exception.Create('Модель не смогла определить все обязательные данные.');
+      FillRecognizedBook(TJSONObject(Content), ABook);
       Result := True;
     except
       on E: Exception do
       begin
         FreeAndNil(ABook);
-        AError := 'Не удалось распознать данные на изображении.';
+        ClearRecognitionStats(AStats);
+        AError := 'Не удалось разобрать данные изображения: ' + E.Message;
       end;
     end;
   finally
-    Parsed.Free;
+    Content.Free;
     Root.Free;
+  end;
+end;
+
+function ParseBooksTextResponse(const AResponse: string; ABooks: TObjectList;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
+var
+  Root, Content, BooksData: TJSONData;
+  Books: TJSONArray;
+  Book: TRecognizedBook;
+  I: Integer;
+begin
+  Result := False;
+  AError := '';
+  Root := nil;
+  Content := nil;
+  ClearRecognitionStats(AStats);
+  if ABooks = nil then
+  begin
+    AError := 'Не передан список для результатов распознавания.';
+    Exit;
+  end;
+  ABooks.Clear;
+  try
+    try
+      ParseResponseEnvelope(AResponse, Root, Content, AStats);
+      BooksData := Content;
+      if Content is TJSONObject then
+        BooksData := TJSONObject(Content).Find('books');
+      if not (BooksData is TJSONArray) then
+        raise Exception.Create('В результате модели отсутствует массив books.');
+      Books := TJSONArray(BooksData);
+      for I := 0 to Books.Count - 1 do
+      begin
+        if not (Books[I] is TJSONObject) then
+          Continue;
+        Book := TRecognizedBook.Create;
+        FillRecognizedBook(TJSONObject(Books[I]), Book);
+        ABooks.Add(Book);
+      end;
+      if ABooks.Count = 0 then
+        raise Exception.Create('Модель не вернула ни одной записи книги.');
+      if ABooks.Count > MAX_TEXT_RECOGNITION_BOOKS then
+        raise Exception.Create('Модель вернула более 100 записей.');
+      Result := True;
+    except
+      on E: Exception do
+      begin
+        ABooks.Clear;
+        ClearRecognitionStats(AStats);
+        AError := 'Не удалось разобрать текстовый файл: ' + E.Message;
+      end;
+    end;
+  finally
+    Content.Free;
+    Root.Free;
+  end;
+end;
+
+function NormalizeHeaderName(const AValue: string): string;
+begin
+  Result := UTF8LowerCase(Trim(AValue));
+  Result := StringReplace(Result, ' ', '', [rfReplaceAll]);
+  Result := StringReplace(Result, '.', '', [rfReplaceAll]);
+  Result := StringReplace(Result, '_', '', [rfReplaceAll]);
+  Result := StringReplace(Result, '-', '', [rfReplaceAll]);
+  Result := StringReplace(Result, '"', '', [rfReplaceAll]);
+end;
+
+function IsTitleHeader(const AValue: string): Boolean;
+var
+  Key: string;
+begin
+  Key := NormalizeHeaderName(AValue);
+  Result := (Key = 'наименование') or (Key = 'название') or
+    (Key = 'наименованиекниги') or (Key = 'названиекниги') or
+    (Key = 'title');
+end;
+
+function IsInventoryHeader(const AValue: string): Boolean;
+var
+  Key: string;
+begin
+  Key := NormalizeHeaderName(AValue);
+  Result := (Key = 'инвентарныйномер') or (Key = 'инвномер') or
+    (Key = 'инвентарный№') or (Key = 'инв№') or
+    (Key = 'inventorynumber');
+end;
+
+function HeaderDelimiter(const AHeader: string): Char;
+var
+  Semicolons, Tabs, Pipes: Integer;
+begin
+  Semicolons := Length(AHeader) - Length(StringReplace(AHeader, ';', '', [rfReplaceAll]));
+  Tabs := Length(AHeader) - Length(StringReplace(AHeader, #9, '', [rfReplaceAll]));
+  Pipes := Length(AHeader) - Length(StringReplace(AHeader, '|', '', [rfReplaceAll]));
+  Result := #0;
+  if (Semicolons >= Tabs) and (Semicolons >= Pipes) and (Semicolons > 0) then
+    Result := ';'
+  else if (Tabs >= Pipes) and (Tabs > 0) then
+    Result := #9
+  else if Pipes > 0 then
+    Result := '|';
+end;
+
+function ValidateRecognitionText(const AText: string; out AError: string): Boolean;
+var
+  Lines, Headers: TStringList;
+  HeaderIndex, I, RecordCount: Integer;
+  Delimiter: Char;
+  HasTitle, HasInventory: Boolean;
+begin
+  Result := False;
+  AError := '';
+  if Trim(AText) = '' then
+  begin
+    AError := 'Текстовый файл пуст.';
+    Exit;
+  end;
+  Lines := TStringList.Create;
+  Headers := TStringList.Create;
+  try
+    Lines.Text := AText;
+    HeaderIndex := -1;
+    for I := 0 to Lines.Count - 1 do
+      if Trim(Lines[I]) <> '' then
+      begin
+        HeaderIndex := I;
+        Break;
+      end;
+    if HeaderIndex < 0 then
+    begin
+      AError := 'В текстовом файле не найдена строка заголовков.';
+      Exit;
+    end;
+    Delimiter := HeaderDelimiter(Lines[HeaderIndex]);
+    if Delimiter = #0 then
+    begin
+      AError := 'В строке заголовков нет поддерживаемого разделителя (;, TAB или |).';
+      Exit;
+    end;
+    Headers.StrictDelimiter := True;
+    Headers.Delimiter := Delimiter;
+    Headers.DelimitedText := Lines[HeaderIndex];
+    HasTitle := False;
+    HasInventory := False;
+    for I := 0 to Headers.Count - 1 do
+    begin
+      HasTitle := HasTitle or IsTitleHeader(Headers[I]);
+      HasInventory := HasInventory or IsInventoryHeader(Headers[I]);
+    end;
+    if not HasTitle or not HasInventory then
+    begin
+      AError := 'В заголовках должны быть колонки «Наименование» (или «Название») ' +
+        'и «Инвентарный номер».';
+      Exit;
+    end;
+    RecordCount := 0;
+    for I := HeaderIndex + 1 to Lines.Count - 1 do
+      if Trim(Lines[I]) <> '' then
+        Inc(RecordCount);
+    if RecordCount = 0 then
+    begin
+      AError := 'В текстовом файле нет записей книг.';
+      Exit;
+    end;
+    if RecordCount > MAX_TEXT_RECOGNITION_BOOKS then
+    begin
+      AError := 'В текстовом файле больше 100 записей. Разделите его на несколько файлов.';
+      Exit;
+    end;
+    Result := True;
+  finally
+    Headers.Free;
+    Lines.Free;
+  end;
+end;
+
+function LoadRecognitionTextFile(const AFileName: string; out AText: string;
+  out AError: string): Boolean;
+var
+  Data: string;
+  EncodingName: string;
+  Encoded: Boolean;
+  Stream: TFileStream;
+begin
+  Result := False;
+  AText := '';
+  AError := '';
+  if not FileExists(AFileName) then
+  begin
+    AError := 'Текстовый файл не найден.';
+    Exit;
+  end;
+  if not SameText(ExtractFileExt(AFileName), '.txt') then
+  begin
+    AError := 'Поддерживаются только текстовые файлы с расширением .txt.';
+    Exit;
+  end;
+  try
+    Stream := TFileStream.Create(AFileName, fmOpenRead or fmShareDenyWrite);
+    try
+      if Stream.Size > MaxInt then
+        raise Exception.Create('Текстовый файл слишком большой.');
+      SetLength(Data, SizeInt(Stream.Size));
+      if Stream.Size > 0 then
+        Stream.ReadBuffer(Data[1], LongInt(Stream.Size));
+    finally
+      Stream.Free;
+    end;
+    EncodingName := GuessEncoding(Data);
+    if EncodingName = '' then
+      EncodingName := EncodingUTF8;
+    AText := ConvertEncodingToUTF8(Data, EncodingName, Encoded);
+    Result := ValidateRecognitionText(AText, AError);
+  except
+    on E: Exception do
+      AError := 'Не удалось прочитать текстовый файл: ' + E.Message;
   end;
 end;
 
@@ -475,19 +809,52 @@ begin
   end;
 end;
 
+function SendRecognitionRequest(const AApiKey, ARequestBody: string;
+  out AResponseBody, AError: string): Boolean;
+var
+  StatusCode: DWORD;
+  ServerMsg: string;
+begin
+  Result := False;
+  AResponseBody := '';
+  AError := '';
+  if not HttpRequest('POST', OPENROUTER_COMPLETIONS_URL, AApiKey,
+    ARequestBody, StatusCode, AResponseBody, AError) then
+    Exit;
+  if (StatusCode >= 200) and (StatusCode < 300) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  ServerMsg := ExtractOpenRouterErrorMessage(AResponseBody);
+  if (StatusCode = 401) or (StatusCode = 403) then
+  begin
+    if ServerMsg <> '' then
+      AError := 'API Key отклонён OpenRouter (HTTP ' + IntToStr(StatusCode) +
+        '): ' + ServerMsg
+    else
+      AError := 'API Key отклонён OpenRouter (HTTP ' + IntToStr(StatusCode) +
+        '). Проверьте правильность ключа.';
+  end
+  else if ServerMsg <> '' then
+    AError := 'OpenRouter: HTTP ' + IntToStr(StatusCode) + '. ' + ServerMsg
+  else
+    AError := 'OpenRouter: HTTP ' + IntToStr(StatusCode) + ' (ответ без сообщения).';
+end;
+
 function RecognizeBookImage(const AFileName, AModel, AApiKey: string;
-  out ABook: TRecognizedBook; out AError: string): Boolean;
+  out ABook: TRecognizedBook; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
 var
   Messages, Content: TJSONArray;
   RequestJson: TJSONObject;
   Message, TextPart, ImagePart, ImageUrl: TJSONObject;
   MimeType, EncodedImage, RequestBody, ResponseBody: string;
-  StatusCode: DWORD;
-  ServerMsg: string;
 begin
   Result := False;
   ABook := nil;
   AError := '';
+  ClearRecognitionStats(AStats);
   if Trim(AModel) = '' then
   begin
     AError := 'Не задана модель OpenRouter.';
@@ -533,46 +900,83 @@ begin
       Messages.Add(Message);
       RequestJson.Add('messages', Messages);
       RequestBody := RequestJson.AsJSON;
-
-      try
-        try
-          if not HttpRequest('POST', OPENROUTER_COMPLETIONS_URL, AApiKey,
-            RequestBody, StatusCode, ResponseBody, AError) then
-          begin
-            { AError уже содержит конкретную причину (WinHTTP). }
-            Exit;
-          end;
-          if (StatusCode < 200) or (StatusCode >= 300) then
-          begin
-            ServerMsg := ExtractOpenRouterErrorMessage(ResponseBody);
-            if (StatusCode = 401) or (StatusCode = 403) then
-            begin
-              if ServerMsg <> '' then
-                AError := 'API Key отклонён OpenRouter (HTTP ' + IntToStr(StatusCode) +
-                  '): ' + ServerMsg
-              else
-                AError := 'API Key отклонён OpenRouter (HTTP ' + IntToStr(StatusCode) +
-                  '). Проверьте правильность ключа.';
-            end
-            else if ServerMsg <> '' then
-              AError := 'OpenRouter: HTTP ' + IntToStr(StatusCode) + '. ' + ServerMsg
-            else
-              AError := 'OpenRouter: HTTP ' + IntToStr(StatusCode) + ' (ответ без сообщения).';
-            Exit;
-          end;
-          Result := ExtractRecognition(ResponseBody, ABook, AError);
-        except
-          on E: Exception do
-            AError := 'Локальная ошибка при распознавании: ' + E.Message;
-        end;
-      finally
-      end;
+      if not SendRecognitionRequest(AApiKey, RequestBody, ResponseBody, AError) then
+        Exit;
+      Result := ParseBookImageResponse(ResponseBody, ABook, AStats, AError);
+      if Result and (Trim(AStats.Models) = '') then
+        AStats.Models := Trim(AModel);
     finally
       RequestJson.Free;
     end;
   except
     on E: Exception do
-      AError := 'Не удалось подготовить изображение для распознавания.';
+    begin
+      FreeAndNil(ABook);
+      ClearRecognitionStats(AStats);
+      AError := 'Локальная ошибка при распознавании изображения: ' + E.Message;
+    end;
+  end;
+end;
+
+function RecognizeBooksTextFile(const AFileName, AModel, AApiKey: string;
+  ABooks: TObjectList; out AStats: TRecognitionStats; out AError: string): Boolean;
+var
+  I: Integer;
+  Messages: TJSONArray;
+  RequestJson, Message: TJSONObject;
+  RequestBody, ResponseBody, TextContent: string;
+begin
+  Result := False;
+  AError := '';
+  ClearRecognitionStats(AStats);
+  if ABooks = nil then
+  begin
+    AError := 'Не передан список для результатов распознавания.';
+    Exit;
+  end;
+  ABooks.Clear;
+  if Trim(AModel) = '' then
+  begin
+    AError := 'Не задана модель OpenRouter.';
+    Exit;
+  end;
+  if Trim(AApiKey) = '' then
+  begin
+    AError := 'Не задан OpenRouter API Key.';
+    Exit;
+  end;
+  if not LoadRecognitionTextFile(AFileName, TextContent, AError) then
+    Exit;
+  try
+    RequestJson := TJSONObject.Create;
+    try
+      RequestJson.Add('model', Trim(AModel));
+      Messages := TJSONArray.Create;
+      Message := TJSONObject.Create;
+      Message.Add('role', 'user');
+      Message.Add('content', TextRecognitionPrompt(TextContent));
+      Messages.Add(Message);
+      RequestJson.Add('messages', Messages);
+      RequestBody := RequestJson.AsJSON;
+      if not SendRecognitionRequest(AApiKey, RequestBody, ResponseBody, AError) then
+        Exit;
+      if not ParseBooksTextResponse(ResponseBody, ABooks, AStats, AError) then
+        Exit;
+      if Trim(AStats.Models) = '' then
+        AStats.Models := Trim(AModel);
+      for I := 0 to ABooks.Count - 1 do
+        TRecognizedBook(ABooks[I]).SourceFile := AFileName;
+      Result := True;
+    finally
+      RequestJson.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      ABooks.Clear;
+      ClearRecognitionStats(AStats);
+      AError := 'Локальная ошибка при распознавании текста: ' + E.Message;
+    end;
   end;
 end;
 
