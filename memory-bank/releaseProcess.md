@@ -31,7 +31,13 @@
    `.sha256`.
 4. Не используйте draft или prerelease: приложение читает только
    `https://api.github.com/repos/sergey-sirenko/Library/releases/latest`.
-5. Проверьте через публичный API:
+5. Программно публикуйте релиз через авторизованный GitHub CLI:
+   `gh release create v<версия> dist/Library-v<версия>-win64.zip
+   dist/Library-v<версия>-win64.zip.sha256 --repo sergey-sirenko/Library
+   --title "Версия <версия>" --notes-file <файл с описанием> --latest`.
+   Команда не должна содержать `--draft` или `--prerelease`.
+6. Проверьте через `gh release view v<версия> --repo sergey-sirenko/Library
+   --json tagName,isDraft,isPrerelease,isLatest,assets` и публичный API:
    - точное имя и версию тега;
    - `draft=false` и `prerelease=false`;
    - имя и размер ZIP;
