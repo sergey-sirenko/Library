@@ -49,7 +49,9 @@ type
     btnBookSearch: TBitBtn;
     btnBookAdd: TBitBtn;
     btnBookRecognize: TBitBtn;
-    btnBookRecognizeText: TBitBtn;
+    pmBookRecognize: TPopupMenu;
+    miBookRecognizeImage: TMenuItem;
+    miBookRecognizeText: TMenuItem;
     btnBookEdit: TBitBtn;
     btnBookDelete: TBitBtn;
     btnBookRestore: TBitBtn;
@@ -145,6 +147,7 @@ type
     procedure edtBookSearchInvChange(Sender: TObject);
     procedure edtBookSearchInvKeyPress(Sender: TObject; var Key: char);
     procedure btnBookAddClick(Sender: TObject);
+    procedure btnBookRecognizeMenuClick(Sender: TObject);
     procedure btnBookRecognizeClick(Sender: TObject);
     procedure btnBookRecognizeTextClick(Sender: TObject);
     procedure btnBookEditClick(Sender: TObject);
@@ -1297,7 +1300,6 @@ begin
   ApplyButtonIcon(btnBookSearch, icoSearch);
   ApplyButtonIcon(btnBookAdd, icoAdd);
   ApplyButtonIcon(btnBookRecognize, icoRun);
-  ApplyButtonIcon(btnBookRecognizeText, icoRun);
   ApplyButtonIcon(btnBookEdit, icoEdit);
   ApplyButtonIcon(btnBookDelete, icoDelete);
   ApplyButtonIcon(btnBookRestore, icoRestore);
@@ -1337,6 +1339,16 @@ begin
   ApplyButtonIcon(btnSelectOpenRouterModel, icoTest);
   ApplyButtonIcon(btnBackupNow, icoBackup);
   ApplyButtonIcon(btnRestoreBackup, icoRestore);
+end;
+
+procedure TMainForm.btnBookRecognizeMenuClick(Sender: TObject);
+var
+  P: TPoint;
+begin
+  if (pmBookRecognize = nil) or (btnBookRecognize = nil) then
+    Exit;
+  P := btnBookRecognize.ClientToScreen(Point(0, btnBookRecognize.Height));
+  pmBookRecognize.Popup(P.X, P.Y);
 end;
 
 procedure TMainForm.ApplyLibraryTitle;
@@ -2283,7 +2295,7 @@ begin
           Failures.Text, mtError, [mbOK], 0);
         Exit;
       end;
-      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats) then
+      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats, False) then
       begin
         RefreshBooks;
         RefreshCopies;
@@ -2306,6 +2318,10 @@ var
   Results: TObjectList;
   Failures: TStringList;
   Stats: TRecognitionStats;
+  TextFormat: TRecognitionTextFormat;
+  HasCategoryColumn: Boolean;
+  RecognizedBook: TRecognizedBook;
+  I: Integer;
   Err: string;
 begin
   if (Trim(FDB.Settings.OpenRouterModel) = '') or
@@ -2334,16 +2350,32 @@ begin
           ExtractFileName(OpenDlg.FileName);
         Application.ProcessMessages;
         if not RecognizeBooksTextFile(OpenDlg.FileName, FDB.Settings.OpenRouterModel,
-          FDB.Settings.OpenRouterApiKey, Results, Stats, Err) then
+          FDB.Settings.OpenRouterApiKey, Results, TextFormat,
+          HasCategoryColumn, Stats, Err) then
         begin
           MessageDlg('Не удалось распознать текстовый файл.' + LineEnding + Err,
             mtError, [mbOK], 0);
           Exit;
         end;
+        if TextFormat = rtfCopiedWebPage then
+        begin
+          for I := 0 to Results.Count - 1 do
+          begin
+            RecognizedBook := TRecognizedBook(Results[I]);
+            RecognizedBook.InventoryNo := '';
+          end;
+          if not FDB.AssignMissingRecognizedInventoryNumbers(Results, Err) then
+          begin
+            MessageDlg('Не удалось назначить инвентарные номера.' +
+              LineEnding + Err, mtError, [mbOK], 0);
+            Exit;
+          end;
+        end;
       finally
         Screen.Cursor := crDefault;
       end;
-      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats) then
+      if ImportRecognizedBooksDialog(FDB, Results, Failures, Stats,
+        (TextFormat = rtfCopiedWebPage) or not HasCategoryColumn) then
       begin
         RefreshBooks;
         RefreshCopies;

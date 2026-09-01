@@ -10,7 +10,7 @@
         <CompatibilityMode Value="True"/>
       </Flags>
       <SessionStorage Value="InProjectDir"/>
-      <Title Value="Библиотека храма"/>
+      <Title Value="Библиотека"/>
       <UseAppBundle Value="False"/>
       <ResourceType Value="res"/>
       <MainUnit Value="0"/>

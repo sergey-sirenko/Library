@@ -27,7 +27,7 @@ object LoginForm: TLoginForm
       Width = 330
       Alignment = taCenter
       AutoSize = False
-      Caption = 'Библиотека храма'
+      Caption = 'Библиотека'
       Font.Style = [fsBold]
       ParentFont = False
     end

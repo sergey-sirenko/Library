@@ -80,7 +80,9 @@ var
 begin
   Books := TObjectList.Create(True);
   try
-    Response := '{"choices":[{"message":{"content":"{\"books\":[{' +
+    Response := '{"choices":[{"message":{"content":"{' +
+      '\"mappingConfirmed\":true,\"mappingError\":\"\",' +
+      '\"ignoredColumns\":[\"Примечание\"],\"books\":[{' +
       '\"title\":\"Первая\",\"inventoryNumber\":\"201\",' +
       '\"authors\":\"Автор\",\"year\":\"2001\",\"publisher\":\"Издатель\",' +
       '\"isbn\":\"ISBN-1\",\"description\":\"Текст\",' +
@@ -93,17 +95,117 @@ begin
     Check(Books.Count = 2, 'сохраняется количество и порядок текстовых записей');
     Book := TRecognizedBook(Books[0]);
     CheckEqual('Издатель', Book.Publisher, 'издательство из текста');
-    CheckEqual('ISBN-1', Book.ISBN, 'ISBN из текста');
+    CheckEqual('ISBN1', Book.ISBN, 'ISBN из текста нормализуется без дефисов');
     Check(TRecognizedBook(Books[1]).InventoryNo = '',
       'частичная текстовая запись доступна для ручной правки');
     Check((Stats.TotalTokens = 150) and Stats.HasCost and
       (Stats.RecognitionCost = 0), 'нулевая стоимость остаётся известной');
+    Check(Books.Count = 2,
+      'неизвестная дополнительная колонка не блокирует результат');
+
+    Response := '{"choices":[{"message":{"content":"{' +
+      '\"mappingConfirmed\":false,' +
+      '\"mappingError\":\"колонки Автор и Год неоднозначны\",' +
+      '\"books\":[]}"}}]}';
+    Check(not ParseBooksTextResponse(Response, Books, Stats, Err) and
+      (Pos('Автор и Год', Err) > 0),
+      'неоднозначное расположение колонок отклоняется с причиной');
+
+    Response := '{"choices":[{"message":{"content":"{' +
+      '\"mappingError\":\"\",\"books\":[]}"}}]}';
+    Check(not ParseBooksTextResponse(Response, Books, Stats, Err) and
+      (Pos('mappingConfirmed', Err) > 0),
+      'ответ без признака проверки колонок отклоняется');
+
+    Response := '{"choices":[{"message":{"content":"{' +
+      '\"mappingConfirmed\":true,\"books\":[]}"}}]}';
+    Check(not ParseBooksTextResponse(Response, Books, Stats, Err) and
+      (Pos('mappingError', Err) > 0),
+      'ответ без описания проверки колонок отклоняется');
 
     Check(not ParseBooksTextResponse('{"choices":[]}', Books, Stats, Err),
       'ответ без результата модели отклоняется');
   finally
     Books.Free;
   end;
+end;
+
+procedure TestBookMetadataLocalizationResponses;
+var
+  Original, Localized: TBookMetadataLocalization;
+  Stats: TRecognitionStats;
+  Err, Response: string;
+begin
+  Original.ISBN := '9785373062213';
+  Original.Language := 'rus';
+  Original.Title := 'Otvergnutoe schast''e (Rejected Happiness)';
+  Original.Authors := 'Evfimiia, [Pashchenko], monakhinia';
+  Original.Publisher := 'Olma Media Grupp';
+  Original.Description := 'Roman o vere; C. S. Lewis mentioned';
+  Original.CategoryName := 'Christian life';
+  Response := '{"choices":[{"message":{"content":"{' +
+    '\"title\":\"Отвергнутое счастье (Rejected Happiness)\",' +
+    '\"authors\":\"Евфимия, [Пащенко], монахиня\",' +
+    '\"publisher\":\"ОЛМА Медиа Групп\",' +
+    '\"description\":\"Роман о вере; C. S. Lewis упоминается\",' +
+    '\"category\":\"Христианская жизнь\"}"}}],' +
+    '"model":"text/model","usage":{"total_tokens":42}}';
+  Check(ParseBookMetadataLocalizationResponse(Response, Original, Localized,
+    Stats, Err), 'локализованные данные книги разбираются: ' + Err);
+  CheckEqual('Отвергнутое счастье (Rejected Happiness)', Localized.Title,
+    'русская транслитерация исправляется, иностранный подзаголовок сохраняется');
+  CheckEqual('Евфимия, [Пащенко], монахиня', Localized.Authors,
+    'автор и русское обозначение локализуются');
+  CheckEqual('ОЛМА Медиа Групп', Localized.Publisher,
+    'русское издательство локализуется');
+  CheckEqual('Роман о вере; C. S. Lewis упоминается', Localized.Description,
+    'иностранное имя внутри русского описания сохраняется');
+  CheckEqual('Христианская жизнь', Localized.CategoryName,
+    'категория русского издания переводится');
+  Check((Stats.Models = 'text/model') and (Stats.TotalTokens = 42),
+    'статистика локализации извлекается');
+
+  Original.Language := 'eng';
+  Original.Title := 'The C++ Programming Language';
+  Original.Authors := 'Bjarne Stroustrup';
+  Original.Publisher := 'Addison-Wesley';
+  Original.Description := 'A book about C++.';
+  Original.CategoryName := 'Programming';
+  Response := '{"choices":[{"message":{"content":"{' +
+    '\"title\":\"The C++ Programming Language\",' +
+    '\"authors\":\"Bjarne Stroustrup\",' +
+    '\"publisher\":\"Addison-Wesley\",' +
+    '\"description\":\"A book about C++.\",' +
+    '\"category\":\"Programming\"}"}}]}';
+  Check(ParseBookMetadataLocalizationResponse(Response, Original, Localized,
+    Stats, Err), 'иностранные данные принимаются без перевода: ' + Err);
+  Check((Localized.Title = Original.Title) and
+    (Localized.Authors = Original.Authors) and
+    (Localized.Publisher = Original.Publisher) and
+    (Localized.Description = Original.Description) and
+    (Localized.CategoryName = Original.CategoryName),
+    'очевидно иностранные поля сохраняются без изменений');
+
+  Response := '{"choices":[{"message":{"content":"{' +
+    '\"title\":\"Исправленное название\",\"authors\":\"Автор\",' +
+    '\"description\":\"Описание\",\"category\":\"Категория\"}"}}]}';
+  Check(not ParseBookMetadataLocalizationResponse(Response, Original, Localized,
+    Stats, Err) and (Localized.Title = Original.Title) and
+    (Pos('publisher', Err) > 0),
+    'неполный ответ модели отклоняется без изменения исходных данных');
+
+  Response := '{"choices":[{"message":{"content":"{' +
+    '\"title\":\"\",\"authors\":\"Bjarne Stroustrup\",' +
+    '\"publisher\":\"Addison-Wesley\",' +
+    '\"description\":\"A book about C++.\",' +
+    '\"category\":\"Programming\"}"}}]}';
+  Check(not ParseBookMetadataLocalizationResponse(Response, Original, Localized,
+    Stats, Err) and (Localized.Title = Original.Title),
+    'очистка заполненного поля моделью отклоняется');
+
+  Check(not LocalizeBookMetadata('', '', Original, Localized, Stats, Err) and
+    (Localized.Title = Original.Title) and (Pos('модель OpenRouter', Err) > 0),
+    'без настроек OpenRouter сохраняются исходные данные и возвращается предупреждение');
 end;
 
 procedure WriteBytes(const AFileName, AData: string);
@@ -121,11 +223,46 @@ end;
 
 procedure TestTextFiles;
 var
-  Dir, FileName, Text, Loaded, Err: string;
+  Dir, FileName, Text, Loaded, Err, Sample: string;
   Lines: TStringList;
-  I: Integer;
+  I, RecordCount: Integer;
   Ok: Boolean;
+  TextFormat: TRecognitionTextFormat;
+  HasCategoryColumn: Boolean;
 begin
+  Text := 'Наименование;Инвентарный номер' + LineEnding + 'Книга;1';
+  CheckEqual(Text, BuildTextRecognitionSample(Text),
+    'контрольный фрагмент включает единственную запись');
+
+  Text := 'Автор;Год;Наименование;Инвентарный номер' + LineEnding +
+    'Автор 1;2001;Книга 1;1' + LineEnding +
+    'Автор 2;2002;Книга 2;2' + LineEnding +
+    'Автор 3;2003;Книга 3;3' + LineEnding +
+    'Автор 4;2004;Книга 4;4' + LineEnding +
+    'Автор 5;2005;Книга 5;5';
+  CheckEqual(Text, BuildTextRecognitionSample(Text),
+    'контрольный фрагмент включает все пять записей в исходном порядке колонок');
+
+  Text := LineEnding + 'Год;Автор;Наименование;Инвентарный номер;Примечание' +
+    LineEnding + '2001;Автор 1;Книга 1;1;лишнее' + LineEnding +
+    '2002;Автор 2;Книга 2;2;' + LineEnding +
+    '2003;Автор 3;Книга 3;3;' + LineEnding +
+    '2004;Автор 4;Книга 4;4;' + LineEnding +
+    '2005;Автор 5;Книга 5;5;' + LineEnding +
+    '2006;Автор 6;Книга 6;6;';
+  Sample := BuildTextRecognitionSample(Text);
+  Check(Pos('Год;Автор;Наименование;Инвентарный номер;Примечание', Sample) = 1,
+    'контрольный фрагмент начинается с первой непустой строки заголовков');
+  Check((Pos('Книга 5', Sample) > 0) and (Pos('Книга 6', Sample) = 0),
+    'контрольный фрагмент ограничен пятью записями');
+
+  Text := 'Наименование;Год;Автор;Инвентарный номер' + LineEnding +
+    '2007;Переставленный автор;Переставленное название;7';
+  Sample := BuildTextRecognitionSample(Text);
+  Check((Pos('Наименование;Год;Автор', Sample) = 1) and
+    (Pos('2007;Переставленный автор;Переставленное название', Sample) > 0),
+    'контрольный фрагмент сохраняет противоречащие заголовкам значения для проверки модели');
+
   Check(ValidateRecognitionText('Наименование;Инвентарный номер' + LineEnding +
     'Книга;1', Err), 'поддерживается разделитель «;»: ' + Err);
   Check(ValidateRecognitionText('Инв. номер' + #9 + 'Название' + LineEnding +
@@ -136,6 +273,55 @@ begin
   Check(not ValidateRecognitionText('Автор;Год' + LineEnding + 'А;2000', Err),
     'заголовок без обязательных колонок отклоняется');
 
+  Text := 'Избранное' + LineEnding +
+    'Введите ключевое слово, название или автора' + LineEnding + LineEnding +
+    'Первая книга [Текст] / Автор Первый. - Москва : Издательство 1, 2020. ' +
+    '- 100 с. : ил.; ISBN 978-5-00000-001-1' + LineEnding +
+    'Первый, Автор Петрович.' + LineEnding + '+ добавить метку' + LineEnding +
+    'Удалить' + LineEnding + LineEnding +
+    'Вторая книга. - Санкт-Петербург : Издательство 2, 2021. ' +
+    '- 200 с.; ISBN 978-5-00000-002-8' + LineEnding + '—' + LineEnding +
+    '+ добавить метку' + LineEnding + 'Удалить' + LineEnding + LineEnding +
+    'Третья книга / Автор Третий. - Казань : Издательство 3, 2022. ' +
+    '- 300 с.; ISBN 978-5-00000-003-5' + LineEnding +
+    'Третий, Автор.' + LineEnding + '+ добавить метку' + LineEnding +
+    'Удалить' + LineEnding + LineEnding +
+    'Четвёртая книга. - Тверь : Издательство 4, 2023. ' +
+    '- 400 с.; ISBN 978-5-00000-004-2' + LineEnding + '—' + LineEnding +
+    '+ добавить метку' + LineEnding + 'Удалить' + LineEnding +
+    'Сортировать по' + LineEnding + 'Ключевые слова' + LineEnding +
+    '+ добавить слово';
+  Err := '';
+  Check(DetectRecognitionTextFormat(Text, TextFormat, RecordCount,
+    HasCategoryColumn, Err) and (TextFormat = rtfCopiedWebPage) and
+    (RecordCount = 4) and not HasCategoryColumn,
+    'копия веб-страницы определяется как четыре библиографические записи: ' + Err);
+  Check(ValidateRecognitionText(Text, Err),
+    'копия веб-страницы проходит локальную проверку: ' + Err);
+  Check(ValidateRecognitionResultCount(rtfCopiedWebPage, 4, 4, Err),
+    'модель должна вернуть все четыре веб-записи: ' + Err);
+  Check(not ValidateRecognitionResultCount(rtfCopiedWebPage, 4, 3, Err) and
+    (Pos('3 записей вместо ожидаемых 4', Err) > 0),
+    'неполный результат модели для веб-копии отклоняется');
+  Check(ValidateRecognitionResultCount(rtfDelimitedTable, 4, 3, Err),
+    'существующий табличный сценарий не получает новую проверку количества');
+  Check(not ValidateRecognitionText('Избранное' + LineEnding +
+    'Произвольный текст без библиографических записей', Err),
+    'произвольный текст без ISBN отклоняется');
+
+  Err := '';
+  Text := 'Инв. номер' + #9 + 'Название' + LineEnding + '2' + #9 + 'Книга';
+  Check(DetectRecognitionTextFormat(Text, TextFormat, RecordCount,
+    HasCategoryColumn, Err) and (TextFormat = rtfDelimitedTable) and
+    (RecordCount = 1) and not HasCategoryColumn,
+    'старый табличный формат по-прежнему определяется отдельно: ' + Err);
+
+  Text := 'Название;Инвентарный номер;Категория' + LineEnding +
+    'Книга;2;Общее';
+  Check(DetectRecognitionTextFormat(Text, TextFormat, RecordCount,
+    HasCategoryColumn, Err) and HasCategoryColumn,
+    'табличная колонка категории определяется по заголовку: ' + Err);
+
   Lines := TStringList.Create;
   try
     Lines.Add('Наименование;Инвентарный номер');
@@ -143,6 +329,13 @@ begin
       Lines.Add('Книга ' + IntToStr(I) + ';' + IntToStr(I));
     Check(not ValidateRecognitionText(Lines.Text, Err),
       'файл более чем со 100 записями отклоняется');
+    Lines.Clear;
+    Lines.Add('Избранное');
+    for I := 1 to MAX_TEXT_RECOGNITION_BOOKS + 1 do
+      Lines.Add('Книга ' + IntToStr(I) +
+        '. - Москва : Издательство, 2020. ISBN 9785000000000');
+    Check(not ValidateRecognitionText(Lines.Text, Err),
+      'веб-копия более чем со 100 записями отклоняется');
   finally
     Lines.Free;
   end;
@@ -166,6 +359,13 @@ begin
     WriteBytes(FileName, string(UTF8ToCP1251(Text)));
     Ok := LoadRecognitionTextFile(FileName, Loaded, Err) and (Loaded = Text);
     Check(Ok, 'читается Windows-1251: ' + Err);
+
+    Text := 'Избранное' + LineEnding +
+      'Книга. - Москва : Издательство, 2020. ISBN 9785000000000';
+    FileName := IncludeTrailingPathDelimiter(Dir) + 'web-copy.txt';
+    WriteBytes(FileName, Text);
+    Ok := LoadRecognitionTextFile(FileName, Loaded, Err) and (Loaded = Text);
+    Check(Ok, 'читается TXT, скопированный с веб-страницы: ' + Err);
   finally
     DeleteDirectory(Dir, False);
   end;
@@ -205,6 +405,7 @@ var
   DB: TLibraryDB;
   Items: TObjectList;
   Book: TBook;
+  ConflictItem: TRecognizedBook;
   ExistingCategory, NewCategory: TCategory;
   SavedCount, InitialCategoryCount, InitialBookCount: Integer;
 begin
@@ -235,7 +436,7 @@ begin
       Check(NewCategory <> nil, 'новая категория найдена в базе');
       Book := TBook(DB.Books[0]);
       Check((Book.Authors = 'Автор Первая') and (Book.Year = 1999) and
-        (Book.Publisher = 'Издательство') and (Book.ISBN = 'ISBN-301') and
+        (Book.Publisher = 'Издательство') and (Book.ISBN = 'ISBN301') and
         (Book.Description = 'Описание Первая') and
         (Book.CategoryID = ExistingCategory.ID),
         'все поля первой книги и существующая категория сохранены');
@@ -251,9 +452,13 @@ begin
     InitialBookCount := DB.Books.Count;
     Items := TObjectList.Create(True);
     try
-      Items.Add(NewRecognizedBook('Конфликт', '301', '2020', ''));
+      ConflictItem := NewRecognizedBook('Конфликт', '305', '2020', '');
+      ConflictItem.ISBN := 'ISBN-301';
+      Items.Add(ConflictItem);
       Check(not DB.ImportRecognizedBooks(Items, 'Основной фонд', SavedCount, Err),
-        'существующий инвентарный номер отклоняется');
+        'существующий ISBN отклоняется');
+      CheckEqual('Книга с таким ISBN уже существует: ISBN301.', Err,
+        'ошибка импорта содержит ISBN существующей книги');
       Check(DB.Books.Count = InitialBookCount,
         'при конфликте база не получает новую книгу');
     finally
@@ -278,7 +483,7 @@ procedure TestInitialBookCopy;
 var
   RootDir, Err: string;
   DB, ReloadedDB: TLibraryDB;
-  Book: TBook;
+  Book, SecondBook: TBook;
   CopyItem: TCopy;
   Location: TLocation;
   BookID, LocationID: TId;
@@ -299,11 +504,34 @@ begin
     LocationID := Location.ID;
 
     Book := DB.AddBookWithInitialCopy('Новая книга', 'Автор', 2026,
-      'Издательство', '9785170000000', 0, 'Описание', '', '701',
+      'Издательство', '978-5-17-000000-0', 0, 'Описание', '', '701',
       LocationID, Err);
     Check(Book <> nil, 'книга и первый экземпляр создаются вместе: ' + Err);
     if Book = nil then
       Exit;
+    CheckEqual('9785170000000', Book.ISBN,
+      'ISBN при сохранении книги нормализуется без дефисов');
+    Check(DB.UpdateBook(Book, Book.Title, Book.Authors, Book.Year,
+      Book.Publisher, '978-5-17-000000-0', Book.CategoryID,
+      Book.Description, '', Err),
+      'ISBN книги можно обновить в форматированном виде: ' + Err);
+    CheckEqual('9785170000000', Book.ISBN,
+      'ISBN при обновлении книги нормализуется без дефисов');
+    Check(DB.AddBook('Дубликат ISBN', '', 2026, '',
+      '978 5 17 000000 0', 0, '', '', Err) = nil,
+      'прямое сохранение книги с повторным ISBN отклоняется');
+    Check(DB.UpdateBook(Book, Book.Title, Book.Authors, Book.Year,
+      Book.Publisher, '978-5-17-000000-0', Book.CategoryID,
+      Book.Description, '', Err),
+      'повторный собственный ISBN разрешён при обновлении');
+    SecondBook := DB.AddBook('Вторая книга', '', 2026, '',
+      '978-5-17-000001-7', 0, '', '', Err);
+    Check(SecondBook <> nil, 'создаётся книга для проверки повторного ISBN при обновлении');
+    if SecondBook <> nil then
+      Check(not DB.UpdateBook(SecondBook, SecondBook.Title, SecondBook.Authors,
+        SecondBook.Year, SecondBook.Publisher, '978-5-17-000000-0',
+        SecondBook.CategoryID, SecondBook.Description, '', Err),
+        'обновление книги с ISBN другой книги отклоняется');
     BookID := Book.ID;
     CopyItem := DB.FindCopyByInv('701');
     Check((CopyItem <> nil) and (CopyItem.BookID = BookID) and
@@ -344,6 +572,8 @@ begin
       Check((Book <> nil) and (CopyItem <> nil) and
         (CopyItem.BookID = BookID) and (CopyItem.LocationID = LocationID),
         'книга и связанный экземпляр сохраняются после перезагрузки');
+      Check((Book <> nil) and (Book.ISBN = '9785170000000'),
+        'ISBN после перезагрузки остаётся без дефисов');
     finally
       ReloadedDB.Free;
     end;
@@ -375,7 +605,8 @@ begin
       Exit;
 
     ActiveBook := DB.AddBook('Активная книга', 'Автор', 2020, '', '', 0, '', '', Err);
-    DeletedBook := DB.AddBook('Удалённая книга', 'Автор', 2021, '', '', 0, '', '', Err);
+    DeletedBook := DB.AddBook('Удалённая книга', 'Автор', 2021, '',
+      '978-5-17-000000-0', 0, '', '', Err);
     Check((ActiveBook <> nil) and (DeletedBook <> nil),
       'создаются активная и удалённая книги: ' + Err);
     if (ActiveBook = nil) or (DeletedBook = nil) then
@@ -400,6 +631,10 @@ begin
       DB.SearchBooks('УДАЛЁННАЯ', '', Results, True);
       Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
         'с флажком удалённая книга находится по названию без учёта регистра');
+      Results.Clear;
+      DB.SearchBooks('978-5-17-000-000-0', '', Results, True);
+      Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
+        'поиск находит ISBN с дефисами у канонической записи');
       Results.Clear;
       DB.SearchBooks('', '802', Results, False);
       Check(Results.Count = 0,
@@ -445,6 +680,75 @@ begin
     until FindNext(Search) <> 0;
   finally
     FindClose(Search);
+  end;
+end;
+
+procedure TestInventoryNumberSuggestionIncludesDeleted;
+var
+  RootDir, Err, Suggested: string;
+  DB: TLibraryDB;
+  Location: TLocation;
+  Book, InitialBook: TBook;
+  CopyItem: TCopy;
+  Items: TObjectList;
+begin
+  RootDir := IncludeTrailingPathDelimiter(GetTempDir(False)) +
+    'LibraryInventorySuggestion-' + IntToStr(GetTickCount64);
+  ForceDirectories(RootDir);
+  DB := TLibraryDB.Create(RootDir);
+  try
+    Check(DB.Open(Err), 'тест подбора инвентарного номера открывает базу: ' + Err);
+    Check(DB.Login('admin', 'admin', Err), 'вход в базу подбора номера: ' + Err);
+    Location := DB.AddLocation('Основной фонд', '', Err);
+    Book := DB.AddBook('Книга для экземпляров', '', 0, '', '', 0, '', '', Err);
+    Check((Location <> nil) and (Book <> nil),
+      'создаются книга и место хранения для подбора номера');
+    if (Location = nil) or (Book = nil) then
+      Exit;
+
+    CopyItem := DB.AddCopy(Book.ID, DB.SuggestNextInventoryNo,
+      DEFAULT_COPY_CONDITION, Location.ID, '', Date, Err);
+    Check(CopyItem <> nil, 'создаётся экземпляр с предложенным номером');
+    if CopyItem = nil then
+      Exit;
+    Check(DB.DeleteCopy(CopyItem, Err),
+      'исходный экземпляр помечается удалённым');
+
+    Suggested := DB.SuggestNextInventoryNo;
+    CheckEqual('2', Suggested,
+      'предложенный номер не переиспользует удалённый экземпляр');
+    CopyItem := DB.AddCopy(Book.ID, Suggested, DEFAULT_COPY_CONDITION,
+      Location.ID, '', Date, Err);
+    Check(CopyItem <> nil, 'новый экземпляр получает следующий свободный номер');
+
+    Suggested := DB.SuggestNextInventoryNo;
+    InitialBook := DB.AddBookWithInitialCopy('Книга с первоначальным экземпляром',
+      '', 0, '', '', 0, '', '', Suggested, Location.ID, Err);
+    Check((InitialBook <> nil) and (DB.FindCopyByInv(Suggested) <> nil),
+      'новая книга получает первоначальный экземпляр с предложенным номером');
+
+    Items := TObjectList.Create(True);
+    try
+      Items.Add(NewRecognizedBook('Распознанная 1', '', '', ''));
+      Items.Add(NewRecognizedBook('Распознанная 2', '5', '', ''));
+      Items.Add(NewRecognizedBook('Распознанная 3', '', '', ''));
+      Items.Add(NewRecognizedBook('Распознанная 4', '', '', ''));
+      Check(DB.AssignMissingRecognizedInventoryNumbers(Items, Err),
+        'недостающие инвентарные номера назначаются: ' + Err);
+      CheckEqual('4', TRecognizedBook(Items[0]).InventoryNo,
+        'автонумерация пропускает занятые и удалённые номера');
+      CheckEqual('5', TRecognizedBook(Items[1]).InventoryNo,
+        'явно указанный номер сохраняется');
+      CheckEqual('6', TRecognizedBook(Items[2]).InventoryNo,
+        'автонумерация пропускает номер из распознаваемого списка');
+      CheckEqual('7', TRecognizedBook(Items[3]).InventoryNo,
+        'всем строкам назначаются уникальные последовательные номера');
+    finally
+      Items.Free;
+    end;
+  finally
+    DB.Free;
+    DeleteDirectory(RootDir, False);
   end;
 end;
 
@@ -508,10 +812,12 @@ end;
 begin
   TestImageResponses;
   TestTextResponses;
+  TestBookMetadataLocalizationResponses;
   TestTextFiles;
   TestDatabaseImport;
   TestInitialBookCopy;
   TestBookSearchDeletedRecords;
+  TestInventoryNumberSuggestionIncludesDeleted;
   TestCoverStorage;
   if Failures <> 0 then
   begin

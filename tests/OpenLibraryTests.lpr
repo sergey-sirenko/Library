@@ -196,12 +196,12 @@ begin
     '"isbn":["5170196369"],"language":["rus"]}]}}]}';
   Check(ParseOpenLibrarySearchResponse(Response, '5170196369', Data, Found, Err),
     'русское издание в транслитерации разбирается: ' + Err);
-  CheckEqual('Успешный руководитель (The Complete Idiot''s Guide To)',
-    Data.Title, 'русское название преобразуется в кириллицу');
-  CheckEqual('Е. Дубрин', Data.Authors,
-    'имя автора преобразуется в кириллицу');
-  CheckEqual('АСТ', Data.Publisher,
-    'издательство преобразуется в кириллицу');
+  CheckEqual('Uspeshnyj rukovoditel'' (The Complete Idiot''s Guide To)',
+    Data.Title, 'API-парсер сохраняет исходное название для проверки моделью');
+  CheckEqual('E. Dubrin', Data.Authors,
+    'API-парсер сохраняет исходное имя автора');
+  CheckEqual('AST', Data.Publisher,
+    'API-парсер сохраняет исходное издательство');
   CheckEqual('rus', Data.Language, 'сохраняется язык точного издания');
 
   Response := '{"docs":[{"key":"/works/OLENW","title":"English title",' +
@@ -378,10 +378,10 @@ begin
   try
     Check(LookupOpenLibraryBook('5-17-019636-9', Dir, Data, WarningText,
       Err), 'реальный запрос Open Library выполняется: ' + Err);
-    Check((Data.Title = 'Успешный руководитель (The Complete Idiot"s Guide To)') and
-      (Data.Authors = 'Е. Дубрин') and (Data.Year = 2005) and
-      (Data.Publisher = 'АСТ') and SameText(Data.Language, 'rus'),
-      'реальный ответ локализует данные ISBN 5-17-019636-9');
+    Check((Data.Title <> '') and (Data.Authors <> '') and
+      (Data.Year = 2005) and (Data.Publisher <> '') and
+      SameText(Data.Language, 'rus'),
+      'реальный ответ возвращает исходные данные ISBN для проверки моделью');
   finally
     DeleteDirectory(Dir, False);
   end;

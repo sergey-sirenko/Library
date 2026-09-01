@@ -5,11 +5,25 @@ unit uOpenRouter;
 interface
 
 uses
-  Classes, SysUtils, Contnrs, uEntities;
+  Classes, SysUtils, Contnrs, uEntities, uTypes;
+
+type
+  TRecognitionTextFormat = (rtfDelimitedTable, rtfCopiedWebPage);
+
+  TBookMetadataLocalization = record
+    ISBN: string;
+    Language: string;
+    Title: string;
+    Authors: string;
+    Publisher: string;
+    Description: string;
+    CategoryName: string;
+  end;
 
 const
   OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
   MAX_TEXT_RECOGNITION_BOOKS = 100;
+  TEXT_RECOGNITION_SAMPLE_ROWS = 5;
 
 { Низкоуровневый HTTP-вызов через WinHTTP (SChannel, без сторонних DLL).
   Используется также модулем uOpenRouterModels. }
@@ -32,13 +46,30 @@ function RecognizeBookImage(const AFileName, AModel, AApiKey: string;
   out ABook: TRecognizedBook; out AStats: TRecognitionStats;
   out AError: string): Boolean;
 function RecognizeBooksTextFile(const AFileName, AModel, AApiKey: string;
-  ABooks: TObjectList; out AStats: TRecognitionStats; out AError: string): Boolean;
+  ABooks: TObjectList; out AFormat: TRecognitionTextFormat;
+  out AHasCategoryColumn: Boolean;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
+function LocalizeBookMetadata(const AModel, AApiKey: string;
+  const AOriginal: TBookMetadataLocalization;
+  out ALocalized: TBookMetadataLocalization; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
 
 { Чистые функции разбора и проверки используются также автотестами. }
 function ParseBookImageResponse(const AResponse: string; out ABook: TRecognizedBook;
   out AStats: TRecognitionStats; out AError: string): Boolean;
 function ParseBooksTextResponse(const AResponse: string; ABooks: TObjectList;
   out AStats: TRecognitionStats; out AError: string): Boolean;
+function ParseBookMetadataLocalizationResponse(const AResponse: string;
+  const AOriginal: TBookMetadataLocalization;
+  out ALocalized: TBookMetadataLocalization; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
+function BuildTextRecognitionSample(const AText: string): string;
+function DetectRecognitionTextFormat(const AText: string;
+  out AFormat: TRecognitionTextFormat; out ARecordCount: Integer;
+  out AHasCategoryColumn: Boolean;
+  out AError: string): Boolean;
+function ValidateRecognitionResultCount(AFormat: TRecognitionTextFormat;
+  AExpectedCount, AActualCount: Integer; out AError: string): Boolean;
 function LoadRecognitionTextFile(const AFileName: string; out AText: string;
   out AError: string): Boolean;
 function ValidateRecognitionText(const AText: string; out AError: string): Boolean;
@@ -373,21 +404,139 @@ begin
     'Не выдумывай отсутствующие данные: неизвестные значения оставляй пустыми.';
 end;
 
-function TextRecognitionPrompt(const AText: string): string;
+function BuildTextRecognitionSample(const AText: string): string;
+var
+  Lines: TStringList;
+  HeaderFound: Boolean;
+  I, RecordCount: Integer;
 begin
+  Result := '';
+  Lines := TStringList.Create;
+  try
+    Lines.Text := AText;
+    HeaderFound := False;
+    RecordCount := 0;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      if Trim(Lines[I]) = '' then
+        Continue;
+      if HeaderFound and (RecordCount >= TEXT_RECOGNITION_SAMPLE_ROWS) then
+        Break;
+      if Result <> '' then
+        Result := Result + LineEnding;
+      Result := Result + Lines[I];
+      if HeaderFound then
+        Inc(RecordCount)
+      else
+        HeaderFound := True;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+function DelimitedTextRecognitionPrompt(const AText: string): string;
+var
+  ControlSample: string;
+begin
+  ControlSample := BuildTextRecognitionSample(AText);
   Result :=
     'Преобразуй таблицу, полученную после диктовки данных библиотечных книг, в ' +
-    'структурированные записи. Первая непустая строка содержит заголовки, порядок ' +
-    'колонок произвольный. Разделителями служат точка с запятой, табуляция или ' +
-    'вертикальная черта; в отдельных строках разделители могут быть ошибочными. ' +
-    'Обязательные поля — название или наименование и инвентарный номер. Возможные ' +
-    'дополнительные поля — авторы, год, издательство, ISBN, описание и категория. ' +
-    'Исправляй только очевидные ошибки распознавания речи и разделения, сохраняй ' +
-    'исходный порядок и количество записей и не выдумывай отсутствующие данные. ' +
-    'Верни только корректный JSON без Markdown и пояснений в формате ' +
-    '{"books":[{"title":"","inventoryNumber":"","authors":"",' +
-    '"year":"","publisher":"","isbn":"","description":"",' +
-    '"category":""}]}. Текст файла:' + LineEnding + AText;
+    'структурированные записи. Первая непустая строка содержит заголовки. ' +
+    'Сначала определи назначение каждой колонки по заголовкам и контрольному ' +
+    'фрагменту из первых пяти записей. Порядок колонок произвольный. Если ' +
+    'заголовки и значения противоречат друг другу, но фактическое назначение ' +
+    'колонок определяется однозначно, исправь сопоставление и верни ' +
+    'mappingConfirmed=true. Если обязательную или поддерживаемую колонку нельзя ' +
+    'определить однозначно, верни mappingConfirmed=false и краткую причину в ' +
+    'mappingError. Неизвестные дополнительные колонки игнорируй: они не делают ' +
+    'сопоставление неоднозначным. Разделителями служат точка с запятой, табуляция ' +
+    'или вертикальная черта; в отдельных строках разделители могут быть ' +
+    'ошибочными. Обязательные поля — название или наименование и инвентарный ' +
+    'номер. Возможные дополнительные поля — авторы, год, издательство, ISBN, ' +
+    'описание и категория. Отсутствующее значение в отдельной записи не является ' +
+    'ошибкой структуры. Исправляй только очевидные ошибки распознавания речи и ' +
+    'разделения, сохраняй исходный порядок и количество записей и не выдумывай ' +
+    'отсутствующие данные. Верни только корректный JSON без Markdown и пояснений ' +
+    'в формате {"mappingConfirmed":true,"mappingError":"","books":[' +
+    '{"title":"","inventoryNumber":"","authors":"","year":"",' +
+    '"publisher":"","isbn":"","description":"","category":""}]}. ' +
+    'При mappingConfirmed=false верни пустой массив books.' + LineEnding +
+    'Контрольный фрагмент:' + LineEnding + ControlSample + LineEnding +
+    'Полный текст файла:' + LineEnding + AText;
+end;
+
+function CopiedWebPageRecognitionPrompt(const AText: string;
+  AExpectedRecordCount: Integer): string;
+begin
+  Result :=
+    'Преобразуй текст, скопированный со страницы сайта с избранными книгами, в ' +
+    'структурированные записи. В тексте ожидается ровно ' +
+    IntToStr(AExpectedRecordCount) + ' библиографических записей. Строка с ' +
+    'библиографическим описанием и ISBN начинает запись книги. Следующую ' +
+    'содержательную строку до элементов управления страницы считай сведениями ' +
+    'об авторе этой книги; одиночное тире означает отсутствие дополнительной ' +
+    'строки автора. Игнорируй заголовок страницы, приглашение поиска, строки ' +
+    '«+ добавить метку», «Удалить», «Сортировать по», «Ключевые слова», ' +
+    '«+ добавить слово» и другие элементы интерфейса сайта. Извлеки название и ' +
+    'подзаголовок, авторов, год, издательство и ISBN. Служебное обозначение ' +
+    '«[Текст]» в название не включай. Сведения об издании, количестве страниц, ' +
+    'иллюстрациях, размере, серии, переплёте и тираже перенеси в description, ' +
+    'если они присутствуют. Категорию не выдумывай: если она явно не указана, ' +
+    'верни пустую строку. Инвентарный номер не выдумывай и всегда возвращай ' +
+    'пустым: приложение назначит его автоматически. Сохрани исходный порядок и ' +
+    'верни ровно ' + IntToStr(AExpectedRecordCount) + ' книг. Если границы ' +
+    'записей нельзя определить однозначно, верни mappingConfirmed=false и ' +
+    'краткую причину в mappingError; иначе верни mappingConfirmed=true. Верни ' +
+    'только корректный JSON без Markdown и пояснений в формате ' +
+    '{"mappingConfirmed":true,"mappingError":"","books":[' +
+    '{"title":"","inventoryNumber":"","authors":"","year":"",' +
+    '"publisher":"","isbn":"","description":"","category":""}]}. ' +
+    'При mappingConfirmed=false верни пустой массив books.' + LineEnding +
+    'Текст страницы:' + LineEnding + AText;
+end;
+
+function TextRecognitionPrompt(const AText: string;
+  AFormat: TRecognitionTextFormat; AExpectedRecordCount: Integer): string;
+begin
+  if AFormat = rtfCopiedWebPage then
+    Result := CopiedWebPageRecognitionPrompt(AText, AExpectedRecordCount)
+  else
+    Result := DelimitedTextRecognitionPrompt(AText);
+end;
+
+function BookMetadataLocalizationPrompt(
+  const AData: TBookMetadataLocalization): string;
+var
+  Source: TJSONObject;
+begin
+  Source := TJSONObject.Create;
+  try
+    Source.Add('isbn', AData.ISBN);
+    Source.Add('sourceLanguage', AData.Language);
+    Source.Add('title', AData.Title);
+    Source.Add('authors', AData.Authors);
+    Source.Add('publisher', AData.Publisher);
+    Source.Add('description', AData.Description);
+    Source.Add('category', AData.CategoryName);
+    Result :=
+      'Проверь библиографические данные книги, полученные из внешнего API. ' +
+      'Исправь на русский язык только те фрагменты, которые по контексту должны ' +
+      'быть русскими, но записаны латинской транслитерацией, смешанной кириллицей ' +
+      'и латиницей, неверными похожими символами или на другом языке. Учитывай ' +
+      'язык издания, название, авторов, издательство и общий контекст. Для ' +
+      'русского издания переводи на русский общеупотребительные категории и ' +
+      'описание, если API вернул их на другом языке. Очевидно иностранные ' +
+      'названия, имена, издательства, бренды, аббревиатуры, формулы, обозначения ' +
+      'и иностранные фрагменты внутри русского текста не переводи и не ' +
+      'транслитерируй. Не меняй смысл, не добавляй сведения и не сокращай текст. ' +
+      'Если поле не требует исправления, верни его без изменений. Верни только ' +
+      'корректный JSON без Markdown и пояснений со всеми полями в формате ' +
+      '{"title":"","authors":"","publisher":"","description":"",' +
+      '"category":""}. Исходные данные:' + LineEnding + Source.AsJSON;
+  finally
+    Source.Free;
+  end;
 end;
 
 function JsonFieldText(AObject: TJSONObject; const AName: string): string;
@@ -400,6 +549,8 @@ begin
   Data := AObject.Find(AName);
   if (Data <> nil) and (Data.JSONType <> jtNull) then
     Result := Trim(Data.AsString);
+  if SameText(AName, 'isbn') then
+    Result := NormalizeISBNFormat(Result);
 end;
 
 procedure FillRecognizedBook(AObject: TJSONObject; ABook: TRecognizedBook);
@@ -503,10 +654,12 @@ end;
 function ParseBooksTextResponse(const AResponse: string; ABooks: TObjectList;
   out AStats: TRecognitionStats; out AError: string): Boolean;
 var
-  Root, Content, BooksData: TJSONData;
+  Root, Content, BooksData, MappingConfirmedData, MappingErrorData: TJSONData;
+  ContentObject: TJSONObject;
   Books: TJSONArray;
   Book: TRecognizedBook;
   I: Integer;
+  MappingError: string;
 begin
   Result := False;
   AError := '';
@@ -522,11 +675,27 @@ begin
   try
     try
       ParseResponseEnvelope(AResponse, Root, Content, AStats);
-      BooksData := Content;
-      if Content is TJSONObject then
-        BooksData := TJSONObject(Content).Find('books');
+      if not (Content is TJSONObject) then
+        raise Exception.Create('Результат модели не является JSON-объектом.');
+      ContentObject := TJSONObject(Content);
+      MappingConfirmedData := ContentObject.Find('mappingConfirmed');
+      if (MappingConfirmedData = nil) or
+         (MappingConfirmedData.JSONType <> jtBoolean) then
+        raise Exception.Create('В результате модели отсутствует признак проверки колонок mappingConfirmed.');
+      MappingErrorData := ContentObject.Find('mappingError');
+      if (MappingErrorData = nil) or (MappingErrorData.JSONType <> jtString) then
+        raise Exception.Create('В результате модели отсутствует описание проверки колонок mappingError.');
+      BooksData := ContentObject.Find('books');
       if not (BooksData is TJSONArray) then
         raise Exception.Create('В результате модели отсутствует массив books.');
+      if not MappingConfirmedData.AsBoolean then
+      begin
+        MappingError := Trim(MappingErrorData.AsString);
+        if MappingError = '' then
+          MappingError := 'модель не смогла однозначно определить назначение колонок';
+        raise Exception.Create('Не удалось однозначно определить расположение колонок: ' +
+          MappingError + '.');
+      end;
       Books := TJSONArray(BooksData);
       for I := 0 to Books.Count - 1 do
       begin
@@ -547,6 +716,76 @@ begin
         ABooks.Clear;
         ClearRecognitionStats(AStats);
         AError := 'Не удалось разобрать текстовый файл: ' + E.Message;
+      end;
+    end;
+  finally
+    Content.Free;
+    Root.Free;
+  end;
+end;
+
+function RequiredLocalizationField(AObject: TJSONObject;
+  const AName: string): string;
+var
+  Data: TJSONData;
+begin
+  Data := AObject.Find(AName);
+  if (Data = nil) or (Data.JSONType <> jtString) then
+    raise Exception.Create('В результате модели отсутствует строковое поле ' +
+      AName + '.');
+  Result := Trim(Data.AsString);
+end;
+
+procedure EnsureLocalizationFieldNotLost(const AOriginal, ALocalized,
+  AFieldCaption: string);
+begin
+  if (Trim(AOriginal) <> '') and (Trim(ALocalized) = '') then
+    raise Exception.Create('Модель очистила поле «' + AFieldCaption + '».');
+end;
+
+function ParseBookMetadataLocalizationResponse(const AResponse: string;
+  const AOriginal: TBookMetadataLocalization;
+  out ALocalized: TBookMetadataLocalization; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
+var
+  Root, Content: TJSONData;
+  ContentObject: TJSONObject;
+  Parsed: TBookMetadataLocalization;
+begin
+  Result := False;
+  ALocalized := AOriginal;
+  AError := '';
+  Root := nil;
+  Content := nil;
+  ClearRecognitionStats(AStats);
+  try
+    try
+      ParseResponseEnvelope(AResponse, Root, Content, AStats);
+      if not (Content is TJSONObject) then
+        raise Exception.Create('Результат модели не является JSON-объектом.');
+      ContentObject := TJSONObject(Content);
+      Parsed := AOriginal;
+      Parsed.Title := RequiredLocalizationField(ContentObject, 'title');
+      Parsed.Authors := RequiredLocalizationField(ContentObject, 'authors');
+      Parsed.Publisher := RequiredLocalizationField(ContentObject, 'publisher');
+      Parsed.Description := RequiredLocalizationField(ContentObject, 'description');
+      Parsed.CategoryName := RequiredLocalizationField(ContentObject, 'category');
+      EnsureLocalizationFieldNotLost(AOriginal.Title, Parsed.Title, 'Название');
+      EnsureLocalizationFieldNotLost(AOriginal.Authors, Parsed.Authors, 'Автор(ы)');
+      EnsureLocalizationFieldNotLost(AOriginal.Publisher, Parsed.Publisher,
+        'Издательство');
+      EnsureLocalizationFieldNotLost(AOriginal.Description, Parsed.Description,
+        'Описание');
+      EnsureLocalizationFieldNotLost(AOriginal.CategoryName, Parsed.CategoryName,
+        'Категория');
+      ALocalized := Parsed;
+      Result := True;
+    except
+      on E: Exception do
+      begin
+        ALocalized := AOriginal;
+        ClearRecognitionStats(AStats);
+        AError := 'Не удалось проверить локализацию данных книги: ' + E.Message;
       end;
     end;
   finally
@@ -585,6 +824,15 @@ begin
     (Key = 'inventorynumber');
 end;
 
+function IsCategoryHeader(const AValue: string): Boolean;
+var
+  Key: string;
+begin
+  Key := NormalizeHeaderName(AValue);
+  Result := (Key = 'категория') or (Key = 'категории') or
+    (Key = 'category');
+end;
+
 function HeaderDelimiter(const AHeader: string): Char;
 var
   Semicolons, Tabs, Pipes: Integer;
@@ -601,14 +849,37 @@ begin
     Result := '|';
 end;
 
-function ValidateRecognitionText(const AText: string; out AError: string): Boolean;
+function HasLikelyISBN(const AValue: string): Boolean;
+var
+  LowerValue: string;
+  I, MarkerPos, DigitCount: Integer;
+begin
+  Result := False;
+  LowerValue := LowerCase(AValue);
+  MarkerPos := Pos('isbn', LowerValue);
+  if MarkerPos = 0 then
+    Exit;
+  DigitCount := 0;
+  for I := MarkerPos + 4 to Length(AValue) do
+    if AValue[I] in ['0'..'9'] then
+      Inc(DigitCount);
+  Result := DigitCount >= 10;
+end;
+
+function DetectRecognitionTextFormat(const AText: string;
+  out AFormat: TRecognitionTextFormat; out ARecordCount: Integer;
+  out AHasCategoryColumn: Boolean;
+  out AError: string): Boolean;
 var
   Lines, Headers: TStringList;
-  HeaderIndex, I, RecordCount: Integer;
+  HeaderIndex, I: Integer;
   Delimiter: Char;
   HasTitle, HasInventory: Boolean;
 begin
   Result := False;
+  AFormat := rtfDelimitedTable;
+  ARecordCount := 0;
+  AHasCategoryColumn := False;
   AError := '';
   if Trim(AText) = '' then
   begin
@@ -632,46 +903,86 @@ begin
       Exit;
     end;
     Delimiter := HeaderDelimiter(Lines[HeaderIndex]);
-    if Delimiter = #0 then
-    begin
-      AError := 'В строке заголовков нет поддерживаемого разделителя (;, TAB или |).';
-      Exit;
-    end;
-    Headers.StrictDelimiter := True;
-    Headers.Delimiter := Delimiter;
-    Headers.DelimitedText := Lines[HeaderIndex];
     HasTitle := False;
     HasInventory := False;
-    for I := 0 to Headers.Count - 1 do
+    if Delimiter <> #0 then
     begin
-      HasTitle := HasTitle or IsTitleHeader(Headers[I]);
-      HasInventory := HasInventory or IsInventoryHeader(Headers[I]);
+      Headers.StrictDelimiter := True;
+      Headers.Delimiter := Delimiter;
+      Headers.DelimitedText := Lines[HeaderIndex];
+      for I := 0 to Headers.Count - 1 do
+      begin
+        HasTitle := HasTitle or IsTitleHeader(Headers[I]);
+        HasInventory := HasInventory or IsInventoryHeader(Headers[I]);
+        AHasCategoryColumn := AHasCategoryColumn or IsCategoryHeader(Headers[I]);
+      end;
     end;
-    if not HasTitle or not HasInventory then
+    if HasTitle or HasInventory then
     begin
-      AError := 'В заголовках должны быть колонки «Наименование» (или «Название») ' +
-        'и «Инвентарный номер».';
+      if not HasTitle or not HasInventory then
+      begin
+        AError := 'В заголовках должны быть колонки «Наименование» (или «Название») ' +
+          'и «Инвентарный номер».';
+        Exit;
+      end;
+      for I := HeaderIndex + 1 to Lines.Count - 1 do
+        if Trim(Lines[I]) <> '' then
+          Inc(ARecordCount);
+      if ARecordCount = 0 then
+      begin
+        AError := 'В текстовом файле нет записей книг.';
+        Exit;
+      end;
+      if ARecordCount > MAX_TEXT_RECOGNITION_BOOKS then
+      begin
+        AError := 'В текстовом файле больше 100 записей. Разделите его на несколько файлов.';
+        Exit;
+      end;
+      AFormat := rtfDelimitedTable;
+      Exit(True);
+    end;
+
+    for I := 0 to Lines.Count - 1 do
+      if HasLikelyISBN(Lines[I]) then
+        Inc(ARecordCount);
+    if ARecordCount = 0 then
+    begin
+      AError := 'Файл не похож ни на таблицу с заголовками, ни на копию страницы ' +
+        'с библиографическими записями и ISBN.';
       Exit;
     end;
-    RecordCount := 0;
-    for I := HeaderIndex + 1 to Lines.Count - 1 do
-      if Trim(Lines[I]) <> '' then
-        Inc(RecordCount);
-    if RecordCount = 0 then
-    begin
-      AError := 'В текстовом файле нет записей книг.';
-      Exit;
-    end;
-    if RecordCount > MAX_TEXT_RECOGNITION_BOOKS then
+    if ARecordCount > MAX_TEXT_RECOGNITION_BOOKS then
     begin
       AError := 'В текстовом файле больше 100 записей. Разделите его на несколько файлов.';
       Exit;
     end;
+    AFormat := rtfCopiedWebPage;
     Result := True;
   finally
     Headers.Free;
     Lines.Free;
   end;
+end;
+
+function ValidateRecognitionText(const AText: string; out AError: string): Boolean;
+var
+  TextFormat: TRecognitionTextFormat;
+  RecordCount: Integer;
+  HasCategoryColumn: Boolean;
+begin
+  Result := DetectRecognitionTextFormat(AText, TextFormat, RecordCount,
+    HasCategoryColumn, AError);
+end;
+
+function ValidateRecognitionResultCount(AFormat: TRecognitionTextFormat;
+  AExpectedCount, AActualCount: Integer; out AError: string): Boolean;
+begin
+  AError := '';
+  Result := (AFormat <> rtfCopiedWebPage) or
+    (AExpectedCount = AActualCount);
+  if not Result then
+    AError := 'Модель вернула ' + IntToStr(AActualCount) +
+      ' записей вместо ожидаемых ' + IntToStr(AExpectedCount) + '.';
 end;
 
 function LoadRecognitionTextFile(const AFileName: string; out AText: string;
@@ -842,6 +1153,65 @@ begin
     AError := 'OpenRouter: HTTP ' + IntToStr(StatusCode) + ' (ответ без сообщения).';
 end;
 
+function LocalizeBookMetadata(const AModel, AApiKey: string;
+  const AOriginal: TBookMetadataLocalization;
+  out ALocalized: TBookMetadataLocalization; out AStats: TRecognitionStats;
+  out AError: string): Boolean;
+var
+  Messages: TJSONArray;
+  RequestJson, Message: TJSONObject;
+  RequestBody, ResponseBody: string;
+begin
+  Result := False;
+  ALocalized := AOriginal;
+  AError := '';
+  ClearRecognitionStats(AStats);
+  if Trim(AModel) = '' then
+  begin
+    AError := 'Не задана модель OpenRouter.';
+    Exit;
+  end;
+  if Trim(AApiKey) = '' then
+  begin
+    AError := 'Не задан OpenRouter API Key.';
+    Exit;
+  end;
+  if (Trim(AOriginal.Title) = '') and (Trim(AOriginal.Authors) = '') and
+     (Trim(AOriginal.Publisher) = '') and (Trim(AOriginal.Description) = '') and
+     (Trim(AOriginal.CategoryName) = '') then
+    Exit(True);
+  try
+    RequestJson := TJSONObject.Create;
+    try
+      RequestJson.Add('model', Trim(AModel));
+      Messages := TJSONArray.Create;
+      Message := TJSONObject.Create;
+      Message.Add('role', 'user');
+      Message.Add('content', BookMetadataLocalizationPrompt(AOriginal));
+      Messages.Add(Message);
+      RequestJson.Add('messages', Messages);
+      RequestBody := RequestJson.AsJSON;
+      if not SendRecognitionRequest(AApiKey, RequestBody, ResponseBody, AError) then
+        Exit;
+      if not ParseBookMetadataLocalizationResponse(ResponseBody, AOriginal,
+        ALocalized, AStats, AError) then
+        Exit;
+      if Trim(AStats.Models) = '' then
+        AStats.Models := Trim(AModel);
+      Result := True;
+    finally
+      RequestJson.Free;
+    end;
+  except
+    on E: Exception do
+    begin
+      ALocalized := AOriginal;
+      ClearRecognitionStats(AStats);
+      AError := 'Локальная ошибка при проверке данных книги: ' + E.Message;
+    end;
+  end;
+end;
+
 function RecognizeBookImage(const AFileName, AModel, AApiKey: string;
   out ABook: TRecognizedBook; out AStats: TRecognitionStats;
   out AError: string): Boolean;
@@ -919,14 +1289,18 @@ begin
 end;
 
 function RecognizeBooksTextFile(const AFileName, AModel, AApiKey: string;
-  ABooks: TObjectList; out AStats: TRecognitionStats; out AError: string): Boolean;
+  ABooks: TObjectList; out AFormat: TRecognitionTextFormat;
+  out AHasCategoryColumn: Boolean;
+  out AStats: TRecognitionStats; out AError: string): Boolean;
 var
-  I: Integer;
+  I, ExpectedRecordCount: Integer;
   Messages: TJSONArray;
   RequestJson, Message: TJSONObject;
   RequestBody, ResponseBody, TextContent: string;
 begin
   Result := False;
+  AFormat := rtfDelimitedTable;
+  AHasCategoryColumn := False;
   AError := '';
   ClearRecognitionStats(AStats);
   if ABooks = nil then
@@ -947,6 +1321,9 @@ begin
   end;
   if not LoadRecognitionTextFile(AFileName, TextContent, AError) then
     Exit;
+  if not DetectRecognitionTextFormat(TextContent, AFormat,
+    ExpectedRecordCount, AHasCategoryColumn, AError) then
+    Exit;
   try
     RequestJson := TJSONObject.Create;
     try
@@ -954,7 +1331,8 @@ begin
       Messages := TJSONArray.Create;
       Message := TJSONObject.Create;
       Message.Add('role', 'user');
-      Message.Add('content', TextRecognitionPrompt(TextContent));
+      Message.Add('content', TextRecognitionPrompt(TextContent, AFormat,
+        ExpectedRecordCount));
       Messages.Add(Message);
       RequestJson.Add('messages', Messages);
       RequestBody := RequestJson.AsJSON;
@@ -962,6 +1340,13 @@ begin
         Exit;
       if not ParseBooksTextResponse(ResponseBody, ABooks, AStats, AError) then
         Exit;
+      if not ValidateRecognitionResultCount(AFormat, ExpectedRecordCount,
+        ABooks.Count, AError) then
+      begin
+        ABooks.Clear;
+        ClearRecognitionStats(AStats);
+        Exit;
+      end;
       if Trim(AStats.Models) = '' then
         AStats.Models := Trim(AModel);
       for I := 0 to ABooks.Count - 1 do

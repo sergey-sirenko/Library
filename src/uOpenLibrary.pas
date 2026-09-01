@@ -5,7 +5,7 @@ unit uOpenLibrary;
 interface
 
 uses
-  Classes, SysUtils;
+  Classes, SysUtils, uTypes;
 
 type
   TOpenLibrarySource = (olsOnline, olsGoogleBooks, olsCache);
@@ -223,12 +223,10 @@ begin
   Result := False;
   ANormalized := '';
   AError := '';
-  Input := Trim(AISBN);
+  Input := NormalizeISBNFormat(AISBN);
   for I := 1 to Length(Input) do
   begin
     Ch := Input[I];
-    if (Ch = '-') or (Ch = ' ') or (Ch = #9) then
-      Continue;
     if (Ch >= '0') and (Ch <= '9') then
       ANormalized := ANormalized + Ch
     else if (UpCase(Ch) = 'X') then
@@ -374,143 +372,6 @@ begin
     Exit;
   end;
   Result := SameText(Trim(AData.AsString), AValue);
-end;
-
-function ApplyLetterCase(const ASource, ALower, AUpper: string): string;
-begin
-  if (ASource <> '') and (ASource[1] in ['A'..'Z']) then
-    Result := AUpper
-  else
-    Result := ALower;
-end;
-
-function TransliterateRussianSegment(const AValue: string): string;
-var
-  I, PairLength: Integer;
-  Source, Pair, Replacement: string;
-begin
-  Result := '';
-  Source := AValue;
-  I := 1;
-  while I <= Length(Source) do
-  begin
-    if not (Source[I] in ['A'..'Z', 'a'..'z', '''']) then
-    begin
-      Result := Result + Source[I];
-      Inc(I);
-      Continue;
-    end;
-    Replacement := '';
-    PairLength := 1;
-    Pair := LowerCase(Copy(Source, I, 4));
-    if Copy(Pair, 1, 4) = 'shch' then
-    begin
-      Replacement := ApplyLetterCase(Source[I], 'щ', 'Щ');
-      PairLength := 4;
-    end
-    else
-    begin
-      Pair := LowerCase(Copy(Source, I, 2));
-      if (Pair = 'yo') or (Pair = 'jo') then
-        Replacement := ApplyLetterCase(Source[I], 'ё', 'Ё')
-      else if Pair = 'zh' then
-        Replacement := ApplyLetterCase(Source[I], 'ж', 'Ж')
-      else if Pair = 'kh' then
-        Replacement := ApplyLetterCase(Source[I], 'х', 'Х')
-      else if Pair = 'ts' then
-        Replacement := ApplyLetterCase(Source[I], 'ц', 'Ц')
-      else if Pair = 'ch' then
-        Replacement := ApplyLetterCase(Source[I], 'ч', 'Ч')
-      else if Pair = 'sh' then
-        Replacement := ApplyLetterCase(Source[I], 'ш', 'Ш')
-      else if (Pair = 'yu') or (Pair = 'ju') then
-        Replacement := ApplyLetterCase(Source[I], 'ю', 'Ю')
-      else if (Pair = 'ya') or (Pair = 'ja') then
-        Replacement := ApplyLetterCase(Source[I], 'я', 'Я')
-      else if (Pair = 'ye') or (Pair = 'je') then
-        Replacement := ApplyLetterCase(Source[I], 'е', 'Е');
-      if Replacement <> '' then
-        PairLength := 2;
-    end;
-    if Replacement = '' then
-      case UpCase(Source[I]) of
-        'A': Replacement := ApplyLetterCase(Source[I], 'а', 'А');
-        'B': Replacement := ApplyLetterCase(Source[I], 'б', 'Б');
-        'C': Replacement := ApplyLetterCase(Source[I], 'к', 'К');
-        'D': Replacement := ApplyLetterCase(Source[I], 'д', 'Д');
-        'E': Replacement := ApplyLetterCase(Source[I], 'е', 'Е');
-        'F': Replacement := ApplyLetterCase(Source[I], 'ф', 'Ф');
-        'G': Replacement := ApplyLetterCase(Source[I], 'г', 'Г');
-        'H': Replacement := ApplyLetterCase(Source[I], 'х', 'Х');
-        'I': Replacement := ApplyLetterCase(Source[I], 'и', 'И');
-        'J': Replacement := ApplyLetterCase(Source[I], 'й', 'Й');
-        'K': Replacement := ApplyLetterCase(Source[I], 'к', 'К');
-        'L': Replacement := ApplyLetterCase(Source[I], 'л', 'Л');
-        'M': Replacement := ApplyLetterCase(Source[I], 'м', 'М');
-        'N': Replacement := ApplyLetterCase(Source[I], 'н', 'Н');
-        'O': Replacement := ApplyLetterCase(Source[I], 'о', 'О');
-        'P': Replacement := ApplyLetterCase(Source[I], 'п', 'П');
-        'Q': Replacement := ApplyLetterCase(Source[I], 'к', 'К');
-        'R': Replacement := ApplyLetterCase(Source[I], 'р', 'Р');
-        'S': Replacement := ApplyLetterCase(Source[I], 'с', 'С');
-        'T': Replacement := ApplyLetterCase(Source[I], 'т', 'Т');
-        'U': Replacement := ApplyLetterCase(Source[I], 'у', 'У');
-        'V': Replacement := ApplyLetterCase(Source[I], 'в', 'В');
-        'W': Replacement := ApplyLetterCase(Source[I], 'в', 'В');
-        'X': Replacement := ApplyLetterCase(Source[I], 'кс', 'КС');
-        'Y': Replacement := ApplyLetterCase(Source[I], 'ы', 'Ы');
-        'Z': Replacement := ApplyLetterCase(Source[I], 'з', 'З');
-        '''': Replacement := 'ь';
-      end;
-    Result := Result + Replacement;
-    Inc(I, PairLength);
-  end;
-end;
-
-function LocalizeRussianTitle(const AValue: string): string;
-var
-  I, SegmentStart, ParenthesisDepth: Integer;
-begin
-  Result := '';
-  SegmentStart := 1;
-  ParenthesisDepth := 0;
-  for I := 1 to Length(AValue) do
-    if AValue[I] = '(' then
-    begin
-      if ParenthesisDepth = 0 then
-      begin
-        Result := Result + TransliterateRussianSegment(
-          Copy(AValue, SegmentStart, I - SegmentStart));
-        SegmentStart := I;
-      end;
-      Inc(ParenthesisDepth);
-    end
-    else if (AValue[I] = ')') and (ParenthesisDepth > 0) then
-    begin
-      Dec(ParenthesisDepth);
-      if ParenthesisDepth = 0 then
-      begin
-        Result := Result + Copy(AValue, SegmentStart, I - SegmentStart + 1);
-        SegmentStart := I + 1;
-      end;
-    end;
-  if SegmentStart <= Length(AValue) then
-  begin
-    if ParenthesisDepth = 0 then
-      Result := Result + TransliterateRussianSegment(Copy(AValue,
-        SegmentStart, MaxInt))
-    else
-      Result := Result + Copy(AValue, SegmentStart, MaxInt);
-  end;
-end;
-
-procedure LocalizeRussianEdition(var AData: TOpenLibraryBookData);
-begin
-  if not SameText(AData.Language, 'rus') then
-    Exit;
-  AData.Title := LocalizeRussianTitle(AData.Title);
-  AData.Authors := TransliterateRussianSegment(AData.Authors);
-  AData.Publisher := TransliterateRussianSegment(AData.Publisher);
 end;
 
 function ExtractYear(const AValue: string): Integer;
@@ -663,7 +524,6 @@ begin
         PublishDate := JSONFirstText(Edition.Find('publish_date'));
         AData.Year := ExtractYear(PublishDate);
       end;
-      LocalizeRussianEdition(AData);
       AFound := True;
       Result := True;
     except
@@ -839,7 +699,8 @@ begin
       Root := GetJSON(ReadFileBytes(FileName));
       if not (Root is TJSONObject) then
         raise Exception.Create('запись кэша не является JSON-объектом');
-      AData.NormalizedISBN := TJSONObject(Root).Get('isbn', ANormalizedISBN);
+      AData.NormalizedISBN := NormalizeISBNFormat(
+        TJSONObject(Root).Get('isbn', ANormalizedISBN));
       AData.Title := TJSONObject(Root).Get('title', '');
       AData.Authors := TJSONObject(Root).Get('authors', '');
       AData.Year := TJSONObject(Root).Get('year', 0);

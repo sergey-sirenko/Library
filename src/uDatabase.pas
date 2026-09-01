@@ -36,6 +36,7 @@ type
     FReadersIdx: TSearchIndex;
     FCurrentUser: TUser;
     FRestoring: Boolean;
+    FBooksIndexNeedsRebuild: Boolean;
     procedure InitDefaults;
     procedure SetDefaultOpenRouterFavoriteModels;
     procedure EnsureSeedData;
@@ -170,6 +171,8 @@ type
     function FindUser(AID: TId): TUser;
     function FindCopyByInv(const AInv: string): TCopy;
     function SuggestNextInventoryNo: string;
+    function AssignMissingRecognizedInventoryNumbers(AItems: TList;
+      out AError: string): Boolean;
     procedure CollectOverdue(AOut: TList);
     function IntegrityCheck(out AError: string): Boolean;
     function CopyCover(const ASource: string; ABookID: TId): string;
@@ -263,6 +266,7 @@ begin
   FNextUserID := 1;
   FCurrentUser := nil;
   FRestoring := False;
+  FBooksIndexNeedsRebuild := False;
 end;
 
 procedure TLibraryDB.Touch(E: TEntity);
@@ -502,6 +506,9 @@ begin
     B.Year := ReadInteger(S);
     B.Publisher := ReadString(S);
     B.ISBN := ReadString(S);
+    if B.ISBN <> NormalizeISBNFormat(B.ISBN) then
+      FBooksIndexNeedsRebuild := True;
+    B.ISBN := NormalizeISBNFormat(B.ISBN);
     B.CategoryID := ReadInt64(S);
     B.Description := ReadString(S);
     B.CoverFile := ReadString(S);
@@ -1149,7 +1156,12 @@ end;
 
 procedure TLibraryDB.LoadOrRebuildIndexes;
 begin
-  if not FBooksIdx.Load then
+  if FBooksIndexNeedsRebuild then
+  begin
+    FLog.Write('Индекс Books.idx перестраивается после нормализации ISBN.');
+    RebuildBookIndex;
+  end
+  else if not FBooksIdx.Load then
   begin
     FLog.Write('Индекс Books.idx перестраивается.');
     RebuildBookIndex;
@@ -1405,13 +1417,6 @@ begin
   Result := nil;
 end;
 
-function NormalizeISBNForCompare(const AISBN: string): string;
-begin
-  Result := UpperCase(Trim(AISBN));
-  Result := StringReplace(Result, '-', '', [rfReplaceAll]);
-  Result := StringReplace(Result, ' ', '', [rfReplaceAll]);
-end;
-
 function TLibraryDB.FindBookByISBN(const AISBN: string;
   AExcludeID: TId): TBook;
 var
@@ -1419,14 +1424,14 @@ var
   B: TBook;
   ISBNKey: string;
 begin
-  ISBNKey := NormalizeISBNForCompare(AISBN);
+  ISBNKey := NormalizeISBNFormat(AISBN);
   if ISBNKey = '' then
     Exit(nil);
   for I := 0 to FBooks.Count - 1 do
   begin
     B := TBook(FBooks[I]);
     if (B.ID <> AExcludeID) and
-      (NormalizeISBNForCompare(B.ISBN) = ISBNKey) then
+      (NormalizeISBNFormat(B.ISBN) = ISBNKey) then
       Exit(B);
   end;
   Result := nil;
@@ -1434,8 +1439,8 @@ end;
 
 function TLibraryDB.SuggestNextInventoryNo: string;
 { Ищет первый свободный целочисленный инвентарный номер, начиная
-  с FSettings.InventoryStartNo. Среди неудалённых копий собирает только
-  номера, которые парсятся как Int64, и возвращает минимальное число
+  с FSettings.InventoryStartNo. Среди всех копий собирает номера,
+  которые парсятся как Int64, и возвращает минимальное число
   в диапазоне [StartNo; ...), которое не занято. Если все числа подряд
   от StartNo заняты — возвращает max+1 (следующий за самым большим).
   Номера нечислового вида (например, «Б-1») не учитываются при поиске. }
@@ -1455,8 +1460,6 @@ begin
     for I := 0 to FCopies.Count - 1 do
     begin
       C := TCopy(FCopies[I]);
-      if C.Deleted then
-        Continue;
       if (C.InventoryNo <> '') and TryStrToInt64(Trim(C.InventoryNo), V) and (V >= StartNo) then
       begin
         Used[Count] := V;
@@ -1497,6 +1500,77 @@ begin
   end;
   { все числа подряд — следующий за максимальным }
   Result := IntToStr(Expected);
+end;
+
+function TLibraryDB.AssignMissingRecognizedInventoryNumbers(AItems: TList;
+  out AError: string): Boolean;
+var
+  I: Integer;
+  Candidate: Int64;
+  CandidateText: string;
+  Item: TRecognizedBook;
+  Used, NewValues: TStringList;
+begin
+  Result := False;
+  AError := '';
+  if AItems = nil then
+  begin
+    AError := 'Не передан список распознанных книг.';
+    Exit;
+  end;
+  if not TryStrToInt64(SuggestNextInventoryNo, Candidate) then
+  begin
+    AError := 'Не удалось определить начальный инвентарный номер.';
+    Exit;
+  end;
+  Used := TStringList.Create;
+  NewValues := TStringList.Create;
+  try
+    Used.Sorted := True;
+    Used.CaseSensitive := False;
+    Used.Duplicates := dupIgnore;
+    for I := 0 to AItems.Count - 1 do
+    begin
+      Item := TRecognizedBook(AItems[I]);
+      if Item = nil then
+      begin
+        AError := 'В списке распознавания обнаружена пустая запись.';
+        Exit;
+      end;
+      NewValues.Add(Trim(Item.InventoryNo));
+      if Trim(Item.InventoryNo) <> '' then
+        Used.Add(Trim(Item.InventoryNo));
+    end;
+
+    for I := 0 to AItems.Count - 1 do
+      if NewValues[I] = '' then
+      begin
+        while True do
+        begin
+          CandidateText := IntToStr(Candidate);
+          if (FindCopyByInv(CandidateText) = nil) and
+             (Used.IndexOf(CandidateText) < 0) then
+            Break;
+          if Candidate = High(Int64) then
+          begin
+            AError := 'Диапазон числовых инвентарных номеров исчерпан.';
+            Exit;
+          end;
+          Inc(Candidate);
+        end;
+        NewValues[I] := CandidateText;
+        Used.Add(CandidateText);
+        if Candidate < High(Int64) then
+          Inc(Candidate);
+      end;
+
+    for I := 0 to AItems.Count - 1 do
+      TRecognizedBook(AItems[I]).InventoryNo := NewValues[I];
+    Result := True;
+  finally
+    NewValues.Free;
+    Used.Free;
+  end;
 end;
 
 function TLibraryDB.FindCopyByInv(const AInv: string): TCopy;
@@ -1869,13 +1943,18 @@ begin
     AError := 'Указанная категория не найдена.';
     Exit;
   end;
+  if FindBookByISBN(AISBN, 0) <> nil then
+  begin
+    AError := 'Книга с таким ISBN уже существует.';
+    Exit;
+  end;
   B := TBook.Create;
   B.ID := NewID(FNextBookID);
   B.Title := Trim(ATitle);
   B.Authors := Trim(AAuthors);
   B.Year := AYear;
   B.Publisher := APublisher;
-  B.ISBN := Trim(AISBN);
+  B.ISBN := NormalizeISBNFormat(AISBN);
   B.CategoryID := ACategoryID;
   B.Description := ADesc;
   Touch(B);
@@ -1971,12 +2050,17 @@ begin
     AError := 'Укажите название книги.';
     Exit;
   end;
+  if FindBookByISBN(AISBN, ABook.ID) <> nil then
+  begin
+    AError := 'Книга с таким ISBN уже существует.';
+    Exit;
+  end;
   Before := ABook.Title;
   ABook.Title := Trim(ATitle);
   ABook.Authors := Trim(AAuthors);
   ABook.Year := AYear;
   ABook.Publisher := APublisher;
-  ABook.ISBN := Trim(AISBN);
+  ABook.ISBN := NormalizeISBNFormat(AISBN);
   ABook.CategoryID := ACategoryID;
   ABook.Description := ADesc;
   if ACoverSrc <> '' then
@@ -2656,6 +2740,12 @@ begin
         AError := 'Инвентарный номер уже существует: ' + Trim(Item.InventoryNo) + '.';
         Exit;
       end;
+      if (Trim(Item.ISBN) <> '') and (FindBookByISBN(Item.ISBN, 0) <> nil) then
+      begin
+        AError := 'Книга с таким ISBN уже существует: ' +
+          NormalizeISBNFormat(Item.ISBN) + '.';
+        Exit;
+      end;
       if (Trim(Item.Year) <> '') and
          ((not TryStrToInt(Trim(Item.Year), YearValue)) or
           (YearValue < 1) or (YearValue > 9999)) then
@@ -2940,13 +3030,14 @@ end;
 procedure TLibraryDB.SearchBooks(const ATitleQuery: string;
   const AInventoryQuery: string; AOut: TList; AIncludeDeleted: Boolean);
 var
-  TitleQ, InvQ, InvQLow: string;
+  TitleQ, ISBNQ, InvQ, InvQLow: string;
   IDs, CopyIDs: TList;
   I: Integer;
   B: TBook;
   C: TCopy;
 begin
   TitleQ := Trim(ATitleQuery);
+  ISBNQ := NormalizeISBNFormat(TitleQ);
   InvQ := Trim(AInventoryQuery);
 
   { пустой запрос по обоим полям — все книги (с учётом флага удалённых) }
@@ -2968,6 +3059,8 @@ begin
     if TitleQ <> '' then
     begin
       FBooksIdx.FindContains(TitleQ, IDs);
+      if (ISBNQ <> '') and (ISBNQ <> TitleQ) then
+        FBooksIdx.FindContains(ISBNQ, IDs);
       for I := 0 to IDs.Count - 1 do
       begin
         B := FindBook(TId(IDs[I]));
@@ -2982,7 +3075,7 @@ begin
           if not B.Deleted then Continue;
           if (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Title)) = 0) and
              (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Authors)) = 0) and
-             (Pos(NormalizeKey(TitleQ), NormalizeKey(B.ISBN)) = 0) then
+             (Pos(ISBNQ, NormalizeISBNFormat(B.ISBN)) = 0) then
             Continue;
           if AOut.IndexOf(B) < 0 then AOut.Add(B);
         end;

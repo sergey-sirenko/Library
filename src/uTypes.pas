@@ -5,8 +5,8 @@ unit uTypes;
 interface
 
 const
-  APP_NAME = 'Библиотека храма';
-  APP_VERSION = '1.1.2';
+  APP_NAME = 'Библиотека';
+  APP_VERSION = '1.1.3';
   DATA_SIGNATURE = 'LIBRA001';
   INDEX_SIGNATURE = 'LIBRAIDX';
   FORMAT_VERSION = 3;
@@ -67,6 +67,7 @@ function FormatDateRu(const ADate: TDateTime): string;
 function FormatDateTimeRu(const ADate: TDateTime): string;
 function ParseDateRu(const S: string; out ADate: TDateTime): Boolean;
 function NormalizeKey(const S: string): string;
+function NormalizeISBNFormat(const S: string): string;
 
 implementation
 
@@ -296,6 +297,26 @@ begin
     if (Ch = #9) or (Ch = #10) or (Ch = #13) or (Ch = ' ') then
       Continue;
     Result := Result + string(Ch);
+  end;
+end;
+
+function NormalizeISBNFormat(const S: string): string;
+var
+  I: Integer;
+  Ch: Char;
+  Input: string;
+begin
+  Result := '';
+  Input := Trim(S);
+  for I := 1 to Length(Input) do
+  begin
+    Ch := Input[I];
+    if (Ch = '-') or (Ch = ' ') or (Ch = #9) then
+      Continue;
+    if UpCase(Ch) = 'X' then
+      Result := Result + 'X'
+    else
+      Result := Result + Ch;
   end;
 end;
 

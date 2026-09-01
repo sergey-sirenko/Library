@@ -3,7 +3,7 @@ object MainForm: TMainForm
   Height = 640
   Top = 100
   Width = 1024
-  Caption = 'Библиотека храма'
+  Caption = 'Библиотека'
   ClientHeight = 640
   ClientWidth = 1024
   OnClose = FormClose
@@ -78,19 +78,10 @@ object MainForm: TMainForm
           Left = 942
           Height = 28
           Top = 8
-          Width = 120
+          Width = 150
           Caption = 'Распознать'
-          OnClick = btnBookRecognizeClick
+          OnClick = btnBookRecognizeMenuClick
           TabOrder = 7
-        end
-        object btnBookRecognizeText: TBitBtn
-          Left = 1070
-          Height = 28
-          Top = 8
-          Width = 160
-          Caption = 'Распознать текст'
-          OnClick = btnBookRecognizeTextClick
-          TabOrder = 8
         end
         object btnBookEdit: TBitBtn
           Left = 578
@@ -932,5 +923,17 @@ object MainForm: TMainForm
     Width = 1024
     Panels = <>
     SimplePanel = True
+  end
+  object pmBookRecognize: TPopupMenu
+    left = 760
+    top = 604
+    object miBookRecognizeImage: TMenuItem
+      Caption = 'Изображения'
+      OnClick = btnBookRecognizeClick
+    end
+    object miBookRecognizeText: TMenuItem
+      Caption = 'Текст'
+      OnClick = btnBookRecognizeTextClick
+    end
   end
 end

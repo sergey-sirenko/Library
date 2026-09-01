@@ -17,12 +17,14 @@ function EditUserDialog(ADB: TLibraryDB; AUser: TUser; out AResultID: TId): Bool
 function IssueLoanDialog(ADB: TLibraryDB; out AResultID: TId): Boolean;
 function PickDateDialog(ADB: TLibraryDB; const ATitle: string; var ADate: TDateTime): Boolean;
 function ImportRecognizedBooksDialog(ADB: TLibraryDB; AItems: TList;
-  AFailures: TStrings; const AStats: TRecognitionStats): Boolean;
+  AFailures: TStrings; const AStats: TRecognitionStats;
+  ACategoryDirectoryOnly: Boolean): Boolean;
 
 implementation
 
 uses
-  LazUTF8, FPImage, FPReadJPEG, FPReadPNG, IntfGraphics, uOpenLibrary;
+  LazUTF8, FPImage, FPReadJPEG, FPReadPNG, IntfGraphics, uOpenLibrary,
+  uOpenRouter;
 
 function FieldHeight(AForm: TForm): Integer;
 begin
@@ -401,9 +403,29 @@ type
     Location: TComboBox;
     Problems: TMemo;
     Items: TList;
+    CategoryDirectoryOnly: Boolean;
     Saved: Boolean;
+    procedure DeleteSelectedClick(Sender: TObject);
     procedure SaveClick(Sender: TObject);
   end;
+
+function FindActiveImportCategory(ADB: TLibraryDB;
+  const AName: string): TCategory;
+var
+  I: Integer;
+  Category: TCategory;
+begin
+  Result := nil;
+  if ADB = nil then
+    Exit;
+  for I := 0 to ADB.Categories.Count - 1 do
+  begin
+    Category := TCategory(ADB.Categories[I]);
+    if (not Category.Deleted) and
+       (UTF8CompareText(Trim(Category.Name), Trim(AName)) = 0) then
+      Exit(Category);
+  end;
+end;
 
 function TBookDlgHelper.FindActiveCategory(const AName: string): TCategory;
 var
@@ -511,10 +533,21 @@ begin
   end;
 end;
 
+procedure AppendBookFillWarning(var AWarning: string; const AValue: string);
+begin
+  if Trim(AValue) = '' then
+    Exit;
+  if AWarning <> '' then
+    AWarning := AWarning + LineEnding;
+  AWarning := AWarning + AValue;
+end;
+
 procedure TBookDlgHelper.FillISBNClick(Sender: TObject);
 var
   Data: TOpenLibraryBookData;
-  WarningText, Err, OldCaption: string;
+  OriginalMetadata, LocalizedMetadata: TBookMetadataLocalization;
+  LocalizationStats: TRecognitionStats;
+  WarningText, Err, LocalizationError, OldCaption: string;
   OldCursor: TCursor;
 begin
   OldCaption := btnFillISBN.Caption;
@@ -529,6 +562,27 @@ begin
       MessageDlg(Err, mtError, [mbOK], 0);
       Exit;
     end;
+    OriginalMetadata.ISBN := Data.NormalizedISBN;
+    OriginalMetadata.Language := Data.Language;
+    OriginalMetadata.Title := Data.Title;
+    OriginalMetadata.Authors := Data.Authors;
+    OriginalMetadata.Publisher := Data.Publisher;
+    OriginalMetadata.Description := Data.Description;
+    OriginalMetadata.CategoryName := Data.CategoryName;
+    if LocalizeBookMetadata(DB.Settings.OpenRouterModel,
+      DB.Settings.OpenRouterApiKey, OriginalMetadata, LocalizedMetadata,
+      LocalizationStats, LocalizationError) then
+    begin
+      Data.Title := LocalizedMetadata.Title;
+      Data.Authors := LocalizedMetadata.Authors;
+      Data.Publisher := LocalizedMetadata.Publisher;
+      Data.Description := LocalizedMetadata.Description;
+      Data.CategoryName := LocalizedMetadata.CategoryName;
+    end
+    else
+      AppendBookFillWarning(WarningText,
+        'Нейросетевая проверка русского текста не выполнена: ' +
+        LocalizationError);
     if Data.Title <> '' then
       eTitle.Text := Data.Title;
     if Data.Authors <> '' then
@@ -551,6 +605,11 @@ begin
     Screen.Cursor := OldCursor;
     btnFillISBN.Caption := OldCaption;
     btnFillISBN.Enabled := True;
+    if (Book = nil) and (eISBN <> nil) and eISBN.CanFocus then
+    begin
+      eISBN.SetFocus;
+      eISBN.SelectAll;
+    end;
   end;
 end;
 
@@ -1640,15 +1699,17 @@ begin
     Seen.Duplicates := dupIgnore;
     for I := 0 to Items.Count - 1 do
     begin
+      if not SameText(Trim(Grid.Cells[0, I + 1]), '1') then
+        Continue;
       Item := TRecognizedBook(Items[I]);
-      Item.Title := Trim(Grid.Cells[0, I + 1]);
-      Item.InventoryNo := Trim(Grid.Cells[1, I + 1]);
-      Item.Authors := Trim(Grid.Cells[2, I + 1]);
-      Item.Year := Trim(Grid.Cells[3, I + 1]);
-      Item.Publisher := Trim(Grid.Cells[4, I + 1]);
-      Item.ISBN := Trim(Grid.Cells[5, I + 1]);
-      Item.Description := Trim(Grid.Cells[6, I + 1]);
-      Item.CategoryName := Trim(Grid.Cells[7, I + 1]);
+      Item.Title := Trim(Grid.Cells[1, I + 1]);
+      Item.InventoryNo := Trim(Grid.Cells[2, I + 1]);
+      Item.Authors := Trim(Grid.Cells[3, I + 1]);
+      Item.Year := Trim(Grid.Cells[4, I + 1]);
+      Item.Publisher := Trim(Grid.Cells[5, I + 1]);
+      Item.ISBN := Trim(Grid.Cells[6, I + 1]);
+      Item.Description := Trim(Grid.Cells[7, I + 1]);
+      Item.CategoryName := Trim(Grid.Cells[8, I + 1]);
       if Item.Title = '' then
         Errors.Add('Строка ' + IntToStr(I + 1) + ': не указано наименование.')
       else if Item.InventoryNo = '' then
@@ -1699,8 +1760,34 @@ begin
   end;
 end;
 
+procedure TRecognizedImportDlgHelper.DeleteSelectedClick(Sender: TObject);
+var
+  I: Integer;
+  DeletedCount: Integer;
+begin
+  DeletedCount := 0;
+  for I := Items.Count - 1 downto 0 do
+    if SameText(Trim(Grid.Cells[0, I + 1]), '1') then
+      Inc(DeletedCount);
+  if DeletedCount = 0 then
+  begin
+    MessageDlg('Выберите строки для удаления.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  if MessageDlg('Удалить выбранные строки (' + IntToStr(DeletedCount) + ')?',
+    mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
+    Exit;
+  for I := Items.Count - 1 downto 0 do
+    if SameText(Trim(Grid.Cells[0, I + 1]), '1') then
+    begin
+      Items.Delete(I);
+      Grid.DeleteRow(I + 1);
+    end;
+end;
+
 function ImportRecognizedBooksDialog(ADB: TLibraryDB; AItems: TList;
-  AFailures: TStrings; const AStats: TRecognitionStats): Boolean;
+  AFailures: TStrings; const AStats: TRecognitionStats;
+  ACategoryDirectoryOnly: Boolean): Boolean;
 var
   F: TForm;
   Helper: TRecognizedImportDlgHelper;
@@ -1708,12 +1795,15 @@ var
   Location: TComboBox;
   Problems: TMemo;
   lblTable, lblStats, lblLocation, lblProblems: TLabel;
-  btnSave, btnCancel: TButton;
+  btnDelete, btnSave, btnCancel: TButton;
   I, Y, TextH, FieldH: Integer;
   Item: TRecognizedBook;
   Loc: TLocation;
   SavedFailures: TStringList;
   CostText, ModelsText: string;
+  CategoryNames: TStringList;
+  CategoryColumn: TGridColumn;
+  Cat: TCategory;
 begin
   Result := False;
   if (AItems = nil) or (AItems.Count = 0) then
@@ -1744,38 +1834,73 @@ begin
     Grid.SetBounds(16, lblTable.Top + lblTable.Height + 8,
       F.ClientWidth - 32, 270);
     Grid.Anchors := [akLeft, akTop, akRight];
-    Grid.ColCount := 8;
+    Grid.ColCount := 9;
     Grid.RowCount := AItems.Count + 1;
     Grid.FixedRows := 1;
     Grid.FixedCols := 0;
     Grid.Options := Grid.Options + [goEditing, goAlwaysShowEditor, goColSizing];
-    Grid.Cells[0, 0] := 'Наименование';
-    Grid.Cells[1, 0] := 'Инв. номер';
-    Grid.Cells[2, 0] := 'Автор(ы)';
-    Grid.Cells[3, 0] := 'Год';
-    Grid.Cells[4, 0] := 'Издательство';
-    Grid.Cells[5, 0] := 'ISBN';
-    Grid.Cells[6, 0] := 'Описание';
-    Grid.Cells[7, 0] := 'Категория';
-    Grid.ColWidths[0] := 260;
-    Grid.ColWidths[1] := 110;
-    Grid.ColWidths[2] := 180;
-    Grid.ColWidths[3] := 75;
-    Grid.ColWidths[4] := 170;
-    Grid.ColWidths[5] := 130;
-    Grid.ColWidths[6] := 260;
-    Grid.ColWidths[7] := 160;
+    if ACategoryDirectoryOnly then
+    begin
+      CategoryNames := TStringList.Create;
+      try
+        CategoryNames.CaseSensitive := False;
+        CategoryNames.Sorted := True;
+        CategoryNames.Duplicates := dupIgnore;
+        for I := 0 to ADB.Categories.Count - 1 do
+        begin
+          Cat := TCategory(ADB.Categories[I]);
+          if (not Cat.Deleted) and (Trim(Cat.Name) <> '') then
+            CategoryNames.Add(Trim(Cat.Name));
+        end;
+        while Grid.Columns.Count < 9 do
+          Grid.Columns.Add;
+        CategoryColumn := Grid.Columns[8];
+        CategoryColumn.ButtonStyle := cbsPickList;
+        CategoryColumn.PickList.Assign(CategoryNames);
+        CategoryColumn.DropDownRows := Max(7, CategoryNames.Count);
+      finally
+        CategoryNames.Free;
+      end;
+    end;
+    Grid.Cells[0, 0] := 'Выбрать';
+    Grid.Cells[1, 0] := 'Наименование';
+    Grid.Cells[2, 0] := 'Инв. номер';
+    Grid.Cells[3, 0] := 'Автор(ы)';
+    Grid.Cells[4, 0] := 'Год';
+    Grid.Cells[5, 0] := 'Издательство';
+    Grid.Cells[6, 0] := 'ISBN';
+    Grid.Cells[7, 0] := 'Описание';
+    Grid.Cells[8, 0] := 'Категория';
+    Grid.Columns[0].ButtonStyle := cbsCheckboxColumn;
+    Grid.Columns[0].Title.Caption := 'Выбрать';
+    if ACategoryDirectoryOnly then
+      for I := 0 to Grid.Columns.Count - 1 do
+        Grid.Columns[I].Title.Caption := Grid.Cells[I, 0];
+    Grid.ColWidths[0] := 70;
+    Grid.ColWidths[1] := 260;
+    Grid.ColWidths[2] := 110;
+    Grid.ColWidths[3] := 180;
+    Grid.ColWidths[4] := 75;
+    Grid.ColWidths[5] := 170;
+    Grid.ColWidths[6] := 130;
+    Grid.ColWidths[7] := 260;
+    Grid.ColWidths[8] := 160;
     for I := 0 to AItems.Count - 1 do
     begin
       Item := TRecognizedBook(AItems[I]);
-      Grid.Cells[0, I + 1] := Item.Title;
-      Grid.Cells[1, I + 1] := Item.InventoryNo;
-      Grid.Cells[2, I + 1] := Item.Authors;
-      Grid.Cells[3, I + 1] := Item.Year;
-      Grid.Cells[4, I + 1] := Item.Publisher;
-      Grid.Cells[5, I + 1] := Item.ISBN;
-      Grid.Cells[6, I + 1] := Item.Description;
-      Grid.Cells[7, I + 1] := Item.CategoryName;
+      Grid.Cells[0, I + 1] := '1';
+      Grid.Cells[1, I + 1] := Item.Title;
+      Grid.Cells[2, I + 1] := Item.InventoryNo;
+      Grid.Cells[3, I + 1] := Item.Authors;
+      Grid.Cells[4, I + 1] := Item.Year;
+      Grid.Cells[5, I + 1] := Item.Publisher;
+      Grid.Cells[6, I + 1] := Item.ISBN;
+      Grid.Cells[7, I + 1] := Item.Description;
+      if ACategoryDirectoryOnly and
+         (FindActiveImportCategory(ADB, Item.CategoryName) = nil) then
+        Grid.Cells[8, I + 1] := ''
+      else
+        Grid.Cells[8, I + 1] := Item.CategoryName;
     end;
 
     ModelsText := Trim(AStats.Models);
@@ -1832,6 +1957,12 @@ begin
     Problems.ScrollBars := ssVertical;
     Problems.Lines.Assign(SavedFailures);
 
+    btnDelete := TButton.Create(F);
+    btnDelete.Parent := F;
+    btnDelete.Caption := 'Удалить выбранные';
+    btnDelete.SetBounds(16, F.ClientHeight - 38, 150, 28);
+    btnDelete.Anchors := [akLeft, akBottom];
+
     btnSave := TButton.Create(F);
     btnSave.Parent := F;
     btnSave.Caption := 'Сохранить';
@@ -1853,7 +1984,9 @@ begin
     Helper.Location := Location;
     Helper.Problems := Problems;
     Helper.Items := AItems;
+    Helper.CategoryDirectoryOnly := ACategoryDirectoryOnly;
     Helper.Saved := False;
+    btnDelete.OnClick := @Helper.DeleteSelectedClick;
     btnSave.OnClick := @Helper.SaveClick;
     LoadCardFormSize(ADB, F, 'RecognizedBooks');
     if F.ShowModal = mrOK then
