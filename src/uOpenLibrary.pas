@@ -58,13 +58,14 @@ uses
   fpjson, jsonparser, FileUtil, uOpenRouter;
 
 const
-  OPENLIBRARY_SEARCH_URL = 'https://openlibrary.org/search.json?isbn=';
+  OPENLIBRARY_SEARCH_URL = 'https://openlibrary.org/search.json?q=isbn%3A';
   OPENLIBRARY_BASE_URL = 'https://openlibrary.org';
   OPENLIBRARY_COVER_URL = 'https://covers.openlibrary.org/b/isbn/';
   OPENLIBRARY_SEARCH_FIELDS =
     '&fields=key,title,author_name,subject,language,editions,editions.key,' +
     'editions.title,editions.publish_date,editions.publisher,editions.isbn,' +
-    'editions.language&limit=10&lang=ru';
+    'editions.language&limit=10';
+  OPENLIBRARY_RUSSIAN_LANGUAGE_FILTER = '+language%3Arus';
   OPENLIBRARY_TIMEOUT_MS = 15000;
   OPENLIBRARY_REQUEST_DELAY_MS = 350;
   GOOGLE_BOOKS_URL = 'https://www.googleapis.com/books/v1/volumes?q=isbn%3A';
@@ -114,6 +115,18 @@ begin
         (Normalized = ANormalizedISBN) then
         Exit(True);
     end;
+end;
+
+function HasCyrillicTitle(const ATitle: string): Boolean;
+var
+  Title: UnicodeString;
+  I: Integer;
+begin
+  Result := False;
+  Title := UTF8Decode(ATitle);
+  for I := 1 to Length(Title) do
+    if (Title[I] >= UnicodeChar($0400)) and (Title[I] <= UnicodeChar($052F)) then
+      Exit(True);
 end;
 
 function GoogleCoverURL(AInfo: TJSONObject): string;
@@ -189,6 +202,8 @@ begin
         Subtitle := Trim(Info.Get('subtitle', ''));
         if (AData.Title <> '') and (Subtitle <> '') then
           AData.Title := AData.Title + ': ' + Subtitle;
+        if not HasCyrillicTitle(AData.Title) then
+          Continue;
         AData.Authors := JSONTextArrayByName(Info, 'authors');
         AData.Publisher := Trim(Info.Get('publisher', ''));
         AData.Year := ExtractYear(Info.Get('publishedDate', ''));
@@ -824,7 +839,8 @@ begin
   Response := '';
   NetworkError := '';
   OnlineFailed := not Getter(OPENLIBRARY_SEARCH_URL + Normalized +
-    OPENLIBRARY_SEARCH_FIELDS, Status, Response, NetworkError);
+    OPENLIBRARY_RUSSIAN_LANGUAGE_FILTER + OPENLIBRARY_SEARCH_FIELDS, Status,
+    Response, NetworkError);
   if not OnlineFailed then
     OnlineFailed := (Status < 200) or (Status >= 300);
   if not OnlineFailed then
@@ -846,6 +862,11 @@ begin
   begin
     if LoadOpenLibraryCache(ACacheDir, Normalized, AData, CacheError) then
     begin
+      if not HasCyrillicTitle(AData.Title) then
+      begin
+        ANotFound := True;
+        Exit;
+      end;
       AWarning := 'Нет доступа к Open Library. Использованы данные из локального кэша.';
       Result := True;
       Exit;
@@ -856,6 +877,12 @@ begin
       AError := 'Open Library вернул HTTP ' + IntToStr(Status) + '.'
     else
       AError := 'Не удалось получить данные Open Library.';
+    Exit;
+  end;
+
+  if not HasCyrillicTitle(AData.Title) then
+  begin
+    ANotFound := True;
     Exit;
   end;
 
@@ -952,7 +979,8 @@ begin
   NetworkError := '';
   if not Getter(Url, Status, Response, NetworkError) then
   begin
-    if LoadOpenLibraryCache(ACacheDir, ANormalizedISBN, AData, CacheError) then
+    if LoadOpenLibraryCache(ACacheDir, ANormalizedISBN, AData, CacheError) and
+      HasCyrillicTitle(AData.Title) then
     begin
       AWarning := 'Нет доступа к Google Books. Использованы данные из локального кэша.';
       Exit(True);
@@ -977,7 +1005,7 @@ begin
   end;
   if not Found then
   begin
-    AError := 'Книга с указанным ISBN не найдена в Open Library и Google Books.';
+    AError := 'Книга с указанным ISBN не найдена в источниках с кириллическим названием.';
     Exit;
   end;
   AData.Source := olsGoogleBooks;

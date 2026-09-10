@@ -3,7 +3,7 @@ program OpenLibraryTests;
 {$mode objfpc}{$H+}
 
 uses
-  Classes, SysUtils, FileUtil, uOpenLibrary, uOpenRouter;
+  Classes, SysUtils, FileUtil, uOpenLibrary, uOpenRouter, uTypes;
 
 var
   Failures: Integer = 0;
@@ -56,9 +56,15 @@ begin
   Result := True;
   if Pos('/search.json?', AURL) > 0 then
   begin
-    MockRequestedRussian := Pos('&lang=ru', AURL) > 0;
+    MockRequestedRussian := Pos('q=isbn%3A5170196369+language%3Arus', AURL) > 0;
     AStatusCode := 200;
-    if (MockMode = 3) or (MockMode >= 6) then
+    if MockMode = 9 then
+      AResponseBody := '{"docs":[{"key":"/works/OLENW",' +
+        '"title":"English title","author_name":["John Smith"],' +
+        '"editions":{"docs":[{"title":"English title",' +
+        '"publisher":["Example Press"],"isbn":["5170196369","9785170196364"],' +
+        '"language":["eng"]}]}}]}'
+    else if (MockMode = 3) or (MockMode >= 6) then
       AResponseBody := '{"docs":[]}'
     else
       AResponseBody := '{"docs":[{"key":"/works/OL1W",' +
@@ -81,6 +87,14 @@ begin
     begin
       AStatusCode := 200;
       AResponseBody := '{"totalItems":0}';
+    end
+    else if MockMode = 10 then
+    begin
+      AStatusCode := 200;
+      AResponseBody := '{"totalItems":1,"items":[{"volumeInfo":{' +
+        '"title":"English Google title","authors":["John Smith"],' +
+        '"language":"ru","industryIdentifiers":[{"type":"ISBN_13",' +
+        '"identifier":"9785170196364"}]}}]}';
     end
     else
     begin
@@ -144,6 +158,12 @@ begin
   CheckEqual('9785170196364', Normalized, 'ISBN-13 нормализуется');
   Check(NormalizeISBN('0-8044-2957-X', Normalized, Err),
     'ISBN-10 с X проходит проверку: ' + Err);
+  Check(NormalizeISBN(FilterISBNInput('ISBN: 0-8044-2957-x!'), Normalized, Err),
+    'очищенный ISBN-10 проходит проверку: ' + Err);
+  Check(not NormalizeISBN('08044X9572', Normalized, Err),
+    'X внутри ISBN-10 отклоняется');
+  Check(not NormalizeISBN('978517019636X', Normalized, Err),
+    'X в ISBN-13 отклоняется');
   Check(not NormalizeISBN('5-17-019636-8', Normalized, Err),
     'неверная контрольная сумма ISBN-10 отклоняется');
   Check(not NormalizeISBN('9785170196365', Normalized, Err),
@@ -257,6 +277,11 @@ begin
   Check(ParseGoogleBooksResponse('{"totalItems":0}', '9785170196364',
     Data, Found, Err) and not Found,
     'отсутствие items Google Books отличается от ошибки');
+  Response := '{"totalItems":1,"items":[{"volumeInfo":{' +
+    '"title":"English title","language":"ru",' +
+    '"industryIdentifiers":[{"identifier":"9785170196364"}]}}]}';
+  Check(ParseGoogleBooksResponse(Response, '9785170196364', Data, Found, Err) and
+    not Found, 'Google Books отклоняет название без кириллицы');
   Check(not ParseGoogleBooksResponse('{bad', '9785170196364', Data, Found, Err),
     'некорректный JSON Google Books отклоняется');
 end;
@@ -275,7 +300,7 @@ begin
     Check(LookupOpenLibraryBook('5-17-019636-9', Dir, Data, WarningText,
       Err, @MockHttpGet), 'онлайн-поиск и кэширование выполняются: ' + Err);
     Check(MockRequestedRussian,
-      'поиск Open Library запрашивает русскоязычное представление');
+      'поиск Open Library фильтрует русскоязычные издания по ISBN');
     Check((Data.Title = 'Название издания') and
       (Data.Authors = 'Автор 1, Автор 2') and (Data.Year = 2005) and
       (Data.Description = 'Описание') and
@@ -290,6 +315,14 @@ begin
       'кэш восстанавливает метаданные и обложку');
     CheckEqual(Data.Language, Loaded.Language,
       'кэш сохраняет язык издания');
+
+    MockMode := 9;
+    Check(not LookupOpenLibraryBook('5-17-019636-9', Dir + 'non-cyrillic',
+      Loaded, WarningText, Err, @MockHttpGet),
+      'Open Library без кириллического названия не принимается');
+    Check(not FileExists(IncludeTrailingPathDelimiter(Dir + 'non-cyrillic') +
+      '5170196369.json'),
+      'ответ Open Library без кириллицы не записывается в кэш');
 
     MockMode := 2;
     Check(LookupOpenLibraryBook('5-17-019636-9', Dir, Loaded, WarningText,
@@ -347,10 +380,25 @@ begin
       FileExists(Data.CoverCacheFile) and (Pos('Google Books', WarningText) > 0),
       'резервный поиск Google Books возвращает PNG-обложку и источник');
 
+    MockMode := 9;
+    MockGoogleCalled := False;
+    Check(LookupBookByISBN('978-5-17-019636-4', Dir, 'test-google-key',
+      Data, WarningText, Err, @MockHttpGet),
+      'Open Library без кириллического названия переключается на Google Books: ' + Err);
+    Check(MockGoogleCalled and (Data.Source = olsGoogleBooks) and
+      (Data.Title = 'Название Google: Подзаголовок'),
+      'Google Books возвращает кириллический результат после Open Library');
+
+    MockMode := 10;
+    Check(not LookupBookByISBN('978-5-17-019636-4', Dir, 'test-google-key',
+      Data, WarningText, Err, @MockHttpGet) and
+      (Pos('кириллическим названием', Err) > 0),
+      'два источника без кириллического названия завершаются ошибкой');
+
     MockMode := 7;
     Check(not LookupBookByISBN('978-5-17-019636-4', Dir, '', Data,
       WarningText, Err, @MockHttpGet) and
-      (Pos('Open Library и Google Books', Err) > 0),
+      (Pos('кириллическим названием', Err) > 0),
       'отсутствие книги у обоих источников показано пользователю');
 
     MockMode := 8;

@@ -3037,7 +3037,7 @@ var
   C: TCopy;
 begin
   TitleQ := Trim(ATitleQuery);
-  ISBNQ := NormalizeISBNFormat(TitleQ);
+  ISBNQ := FilterISBNInput(TitleQ);
   InvQ := Trim(AInventoryQuery);
 
   { пустой запрос по обоим полям — все книги (с учётом флага удалённых) }
@@ -3059,8 +3059,6 @@ begin
     if TitleQ <> '' then
     begin
       FBooksIdx.FindContains(TitleQ, IDs);
-      if (ISBNQ <> '') and (ISBNQ <> TitleQ) then
-        FBooksIdx.FindContains(ISBNQ, IDs);
       for I := 0 to IDs.Count - 1 do
       begin
         B := FindBook(TId(IDs[I]));
@@ -3068,14 +3066,15 @@ begin
         if B.Deleted and (not AIncludeDeleted) then Continue;
         if AOut.IndexOf(B) < 0 then AOut.Add(B);
       end;
-      if AIncludeDeleted then
-        for I := 0 to FBooks.Count - 1 do
+      for I := 0 to FBooks.Count - 1 do
         begin
           B := TBook(FBooks[I]);
-          if not B.Deleted then Continue;
-          if (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Title)) = 0) and
-             (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Authors)) = 0) and
-             (Pos(ISBNQ, NormalizeISBNFormat(B.ISBN)) = 0) then
+          if B.Deleted and (not AIncludeDeleted) then Continue;
+          if not ((ISBNQ <> '') and
+            (Pos(ISBNQ, FilterISBNInput(B.ISBN)) > 0)) and
+            not (B.Deleted and
+              ((Pos(NormalizeKey(TitleQ), NormalizeKey(B.Title)) > 0) or
+               (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Authors)) > 0))) then
             Continue;
           if AOut.IndexOf(B) < 0 then AOut.Add(B);
         end;

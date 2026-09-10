@@ -68,6 +68,7 @@ function FormatDateTimeRu(const ADate: TDateTime): string;
 function ParseDateRu(const S: string; out ADate: TDateTime): Boolean;
 function NormalizeKey(const S: string): string;
 function NormalizeISBNFormat(const S: string): string;
+function FilterISBNInput(const S: string): string;
 
 implementation
 
@@ -298,6 +299,16 @@ begin
       Continue;
     Result := Result + string(Ch);
   end;
+end;
+
+function FilterISBNInput(const S: string): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(S) do
+    if S[I] in ['0'..'9', 'X', 'x'] then
+      Result := Result + UpCase(S[I]);
 end;
 
 function NormalizeISBNFormat(const S: string): string;

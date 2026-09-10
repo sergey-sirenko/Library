@@ -604,8 +604,9 @@ begin
     if Location = nil then
       Exit;
 
-    ActiveBook := DB.AddBook('Активная книга', 'Автор', 2020, '', '', 0, '', '', Err);
-    DeletedBook := DB.AddBook('Удалённая книга', 'Автор', 2021, '',
+    ActiveBook := DB.AddBook('Активная книга 123456', 'Александр Пушкин', 2020, '',
+      '080442957X', 0, '', '', Err);
+    DeletedBook := DB.AddBook('Удалённая книга', 'Лев Толстой', 2021, '',
       '978-5-17-000000-0', 0, '', '', Err);
     Check((ActiveBook <> nil) and (DeletedBook <> nil),
       'создаются активная и удалённая книги: ' + Err);
@@ -624,6 +625,18 @@ begin
 
     Results := TList.Create;
     try
+      DB.SearchBooks('пУшК', '', Results, False);
+      Check((Results.Count = 1) and (TBook(Results[0]) = ActiveBook),
+        'часть фамилии автора находится без учёта регистра кириллицы');
+      Results.Clear;
+      DB.SearchBooks('тОлС', '', Results, False);
+      Check(Results.Count = 0,
+        'без флажка удалённая книга не находится по автору');
+      Results.Clear;
+      DB.SearchBooks('тОлС', '', Results, True);
+      Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
+        'с флажком удалённая книга находится по части фамилии автора');
+      Results.Clear;
       DB.SearchBooks('удалённая', '', Results, False);
       Check(Results.Count = 0,
         'без флажка удалённая книга не находится по названию');
@@ -639,6 +652,20 @@ begin
       DB.SearchBooks('', '802', Results, False);
       Check(Results.Count = 0,
         'без флажка удалённая книга не находится по инвентарному номеру');
+      Results.Clear;
+      DB.SearchBooks('ISBN: 0-8044-2957-x!', '', Results, False);
+      Check((Results.Count = 1) and (TBook(Results[0]) = ActiveBook),
+        'сканированный ISBN с X находит активную книгу');
+      Results.Clear;
+      DB.SearchBooks('ISBN: 978—5—17—000000—0!', '', Results, True);
+      Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
+        'сканированный ISBN находит удалённую книгу');
+      Results.Clear;
+      DB.SearchBooks('ISBN: 123456', '', Results, True);
+      Check(Results.Count = 0, 'очищенный ISBN не ищется в названии');
+      Results.Clear;
+      DB.SearchBooks('несуществующая', '', Results, True);
+      Check(Results.Count = 0, 'пустой ISBN запроса не совпадает со всеми книгами');
       Results.Clear;
       DB.SearchBooks('', '802', Results, True);
       Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
@@ -811,6 +838,10 @@ end;
 
 begin
   TestImageResponses;
+  CheckEqual('080442957X', FilterISBNInput('ISBN: 0–8044—2957-x!'),
+    'фильтр ISBN сохраняет ведущий ноль и контрольный X');
+  CheckEqual('', FilterISBNInput('ISBN: !' + #9 + #13 + #10),
+    'фильтр удаляет текст и управляющие символы');
   TestTextResponses;
   TestBookMetadataLocalizationResponses;
   TestTextFiles;

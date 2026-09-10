@@ -24,7 +24,7 @@ implementation
 
 uses
   LazUTF8, FPImage, FPReadJPEG, FPReadPNG, IntfGraphics, uOpenLibrary,
-  uOpenRouter;
+  uOpenRouter, uGridSorting, uButtonShortcuts;
 
 function FieldHeight(AForm: TForm): Integer;
 begin
@@ -257,7 +257,7 @@ var
   H, W: Integer;
 begin
   H := FieldHeight(AForm);
-  W := Max(90, AForm.Canvas.TextWidth('Отмена') + 28);
+  W := Max(90, AForm.Canvas.TextWidth('Отмена (Esc)') + 28);
   { Сначала высота клиентской области — иначе akBottom считает
     отрицательный отступ (кнопки уже ниже текущего ClientHeight)
     и после ресайза уезжают за нижний край. }
@@ -267,11 +267,13 @@ begin
   AOK.Caption := AOKCaption;
   AOK.ModalResult := mrNone;
   AOK.Default := True;
-  AOK.Width := Max(W, AForm.Canvas.TextWidth(AOKCaption) + 28);
+  if AOKCaption = 'Сохранить' then BindButtonShortcut(AOK, bsSave);
+  AOK.Width := Max(W, AForm.Canvas.TextWidth(AOK.Caption) + 28);
   AOK.Height := H;
   ACancel := TButton.Create(AForm);
   ACancel.Parent := AForm;
   ACancel.Caption := 'Отмена';
+  BindButtonShortcut(ACancel, bsCancel);
   ACancel.ModalResult := mrCancel;
   ACancel.Cancel := True;
   ACancel.Width := W;
@@ -299,17 +301,18 @@ type
     CoverPreview: TImage;
     CoverPlaceholder: TLabel;
     btnOK: TButton;
-    ExternalCategoryIndex: Integer;
+    ShowSavedCover: Boolean;
     ResultID: TId;
     Saved: Boolean;
-    function FindActiveCategory(const AName: string): TCategory;
-    procedure SelectExternalCategory(const AName: string);
+    procedure ClearBookFields;
+    procedure SelectExistingCategory(const AName: string);
     procedure UpdateCoverPreview;
     procedure CoverPathChange(Sender: TObject);
     procedure FormResize(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure FillISBNClick(Sender: TObject);
     procedure ISBNKeyPress(Sender: TObject; var Key: Char);
+    procedure ISBNChange(Sender: TObject);
     procedure OKClick(Sender: TObject);
   end;
 
@@ -427,35 +430,26 @@ begin
   end;
 end;
 
-function TBookDlgHelper.FindActiveCategory(const AName: string): TCategory;
-var
-  I: Integer;
-  Category: TCategory;
+procedure TBookDlgHelper.ClearBookFields;
 begin
-  for I := 0 to DB.Categories.Count - 1 do
-  begin
-    Category := TCategory(DB.Categories[I]);
-    if (not Category.Deleted) and
-      (UTF8CompareText(Trim(Category.Name), Trim(AName)) = 0) then
-      Exit(Category);
-  end;
-  Result := nil;
+  eTitle.Clear;
+  eAuthors.Clear;
+  eYear.Clear;
+  ePublisher.Clear;
+  eDesc.Clear;
+  ShowSavedCover := False;
+  eCover.Clear;
+  cbCat.ItemIndex := 0;
+  UpdateCoverPreview;
 end;
 
-procedure TBookDlgHelper.SelectExternalCategory(const AName: string);
+procedure TBookDlgHelper.SelectExistingCategory(const AName: string);
 var
   I: Integer;
   Category: TCategory;
 begin
   if Trim(AName) = '' then
     Exit;
-  if (ExternalCategoryIndex >= 0) and
-    (ExternalCategoryIndex < cbCat.Items.Count) and
-    (cbCat.Items.Objects[ExternalCategoryIndex] = nil) then
-  begin
-    cbCat.Items.Delete(ExternalCategoryIndex);
-    ExternalCategoryIndex := -1;
-  end;
   for I := 0 to cbCat.Items.Count - 1 do
     if cbCat.Items.Objects[I] <> nil then
     begin
@@ -466,8 +460,6 @@ begin
         Exit;
       end;
     end;
-  ExternalCategoryIndex := cbCat.Items.Add(Trim(AName));
-  cbCat.ItemIndex := ExternalCategoryIndex;
 end;
 
 procedure TBookDlgHelper.UpdateCoverPreview;
@@ -479,7 +471,8 @@ begin
   if (CoverPreview = nil) or (CoverPlaceholder = nil) then
     Exit;
   FileName := Trim(eCover.Text);
-  if (FileName = '') and (Book <> nil) and (Book.CoverFile <> '') then
+  if (FileName = '') and ShowSavedCover and (Book <> nil) and
+    (Book.CoverFile <> '') then
     FileName := DB.Paths.CoversDir + Book.CoverFile
   else if (FileName <> '') and not FileExists(FileName) and
     (ExtractFilePath(FileName) = '') then
@@ -514,6 +507,8 @@ end;
 
 procedure TBookDlgHelper.CoverPathChange(Sender: TObject);
 begin
+  if Trim(eCover.Text) = '' then
+    ShowSavedCover := False;
   UpdateCoverPreview;
 end;
 
@@ -551,6 +546,8 @@ var
   OldCursor: TCursor;
 begin
   OldCaption := btnFillISBN.Caption;
+  ISBNChange(eISBN);
+  ClearBookFields;
   OldCursor := Screen.Cursor;
   btnFillISBN.Enabled := False;
   btnFillISBN.Caption := 'Загрузка...';
@@ -594,7 +591,7 @@ begin
     if Data.Description <> '' then
       eDesc.Text := Data.Description;
     if Data.CategoryName <> '' then
-      SelectExternalCategory(Data.CategoryName);
+      SelectExistingCategory(Data.CategoryName);
     if Data.CoverCacheFile <> '' then
       eCover.Text := Data.CoverCacheFile;
     UpdateCoverPreview;
@@ -613,10 +610,34 @@ begin
   end;
 end;
 
+procedure TBookDlgHelper.ISBNChange(Sender: TObject);
+var
+  Original, Cleaned: string;
+  StartPos, EndPos: Integer;
+begin
+  Original := eISBN.Text;
+  Cleaned := FilterISBNInput(Original);
+  if Original = Cleaned then
+    Exit;
+  StartPos := Length(FilterISBNInput(UTF8Copy(Original, 1, eISBN.SelStart)));
+  EndPos := Length(FilterISBNInput(UTF8Copy(Original, 1,
+    eISBN.SelStart + eISBN.SelLength)));
+  eISBN.Text := Cleaned;
+  eISBN.SelStart := StartPos;
+  eISBN.SelLength := EndPos - StartPos;
+end;
+
 procedure TBookDlgHelper.ISBNKeyPress(Sender: TObject; var Key: Char);
 begin
   if Key <> #13 then
+  begin
+    if Key >= #32 then
+      if Key in ['0'..'9', 'X', 'x'] then
+        Key := UpCase(Key)
+      else
+        Key := #0;
     Exit;
+  end;
   Key := #0;
   FillISBNClick(Sender);
 end;
@@ -624,7 +645,6 @@ end;
 procedure TBookDlgHelper.OKClick(Sender: TObject);
 var
   NewBook: TBook;
-  NewCategory: TCategory;
   Err: string;
   Year: Integer;
   CatID, LocID: TId;
@@ -660,19 +680,6 @@ begin
   CatID := 0;
   if (cbCat.ItemIndex >= 0) and (cbCat.Items.Objects[cbCat.ItemIndex] <> nil) then
     CatID := TCategory(cbCat.Items.Objects[cbCat.ItemIndex]).ID;
-  if (cbCat.ItemIndex = ExternalCategoryIndex) and
-    (ExternalCategoryIndex >= 0) then
-  begin
-    NewCategory := FindActiveCategory(cbCat.Items[ExternalCategoryIndex]);
-    if NewCategory = nil then
-      NewCategory := DB.AddCategory(cbCat.Items[ExternalCategoryIndex], '', '', Err);
-    if NewCategory = nil then
-    begin
-      MessageDlg(Err, mtError, [mbOK], 0);
-      Exit;
-    end;
-    CatID := NewCategory.ID;
-  end;
   if Book = nil then
   begin
     NewBook := DB.AddBookWithInitialCopy(eTitle.Text, eAuthors.Text, Year,
@@ -887,7 +894,7 @@ begin
     Helper.DB := ADB;
     Helper.Form := F;
     Helper.Book := ABook;
-    Helper.ExternalCategoryIndex := -1;
+    Helper.ShowSavedCover := True;
     ApplyFormUIFont(F, ADB.Settings.UIFontSize);
     PrepareCardForm(F);
     F.Caption := 'Книга';
@@ -919,7 +926,7 @@ begin
     CoverPlaceholder.Transparent := True;
     FW := FieldsPanel.Width - 32;
     Y := 8;
-    InputPanelWithButton(FieldsPanel, 'ISBN', Y, FW, 'Заполнить', eISBN,
+    InputPanelWithButton(FieldsPanel, 'ISBN', Y, FW, 'Заполнить (F4)', eISBN,
       btnFillISBN);
     eInv := nil;
     cbLoc := nil;
@@ -988,7 +995,9 @@ begin
     Helper.CoverPlaceholder := CoverPlaceholder;
     Helper.btnOK := btnOK;
     btnFillISBN.OnClick := @Helper.FillISBNClick;
+    BindButtonShortcut(Helper.btnFillISBN, bsFill);
     eISBN.OnKeyPress := @Helper.ISBNKeyPress;
+    eISBN.OnChange := @Helper.ISBNChange;
     eCover.OnChange := @Helper.CoverPathChange;
     btnOK.OnClick := @Helper.OKClick;
     F.OnResize := @Helper.FormResize;
@@ -1527,7 +1536,7 @@ begin
     FW := F.ClientWidth - 32;
     Y := 8;
     H := FieldHeight(F);
-    BtnW := Max(90, F.Canvas.TextWidth('Найти') + 28);
+    BtnW := Max(90, F.Canvas.TextWidth('Найти (F3)') + 28);
     LabelH := F.Canvas.TextHeight('Ag') + 4;
 
     lblInv := TLabel.Create(F);
@@ -1606,6 +1615,8 @@ begin
     eInv.OnExit := @Helper.InvExit;
     eInv.OnChange := @Helper.InvChange;
     btnSearch.OnClick := @Helper.SearchClick;
+    BindButtonShortcut(btnSearch, bsFind);
+    TButtonShortcuts.ForForm(F).Bind(btnFindInv, bsFind, [eInv, btnFindInv]);
     edtReaderSearch.OnKeyPress := @Helper.SearchKeyPress;
 
     Helper.DB := ADB;
@@ -1701,7 +1712,7 @@ begin
     begin
       if not SameText(Trim(Grid.Cells[0, I + 1]), '1') then
         Continue;
-      Item := TRecognizedBook(Items[I]);
+      Item := TRecognizedBook(Grid.Objects[0, I + 1]);
       Item.Title := Trim(Grid.Cells[1, I + 1]);
       Item.InventoryNo := Trim(Grid.Cells[2, I + 1]);
       Item.Authors := Trim(Grid.Cells[3, I + 1]);
@@ -1780,7 +1791,7 @@ begin
   for I := Items.Count - 1 downto 0 do
     if SameText(Trim(Grid.Cells[0, I + 1]), '1') then
     begin
-      Items.Delete(I);
+      Items.Remove(Grid.Objects[0, I + 1]);
       Grid.DeleteRow(I + 1);
     end;
 end;
@@ -1888,6 +1899,7 @@ begin
     for I := 0 to AItems.Count - 1 do
     begin
       Item := TRecognizedBook(AItems[I]);
+      Grid.Objects[0, I + 1] := Item;
       Grid.Cells[0, I + 1] := '1';
       Grid.Cells[1, I + 1] := Item.Title;
       Grid.Cells[2, I + 1] := Item.InventoryNo;
@@ -1910,6 +1922,9 @@ begin
       CostText := Format('$%.6f', [AStats.RecognitionCost])
     else
       CostText := '—';
+    TGridSorting.CreateFor(Grid, 0, nil);
+    ApplyGridSorting(Grid);
+
     Y := Grid.Top + Grid.Height + 10;
     lblStats := TLabel.Create(F);
     lblStats.Parent := F;
@@ -1977,6 +1992,18 @@ begin
     btnCancel.Anchors := [akRight, akBottom];
     btnCancel.Cancel := True;
     btnCancel.ModalResult := mrCancel;
+
+    BindButtonShortcut(btnDelete, bsDelete);
+    BindButtonShortcut(btnSave, bsSave);
+    BindButtonShortcut(btnCancel, bsCancel);
+    btnCancel.Left := F.ClientWidth - 16 - btnCancel.Width;
+    btnSave.Left := btnCancel.Left - 8 - btnSave.Width;
+    btnDelete.Top := F.ClientHeight - 10 - btnDelete.Height;
+    btnSave.Top := F.ClientHeight - 10 - btnSave.Height;
+    btnCancel.Top := F.ClientHeight - 10 - btnCancel.Height;
+    Problems.Height := btnSave.Top - 10 - Problems.Top;
+    F.Constraints.MinWidth := Max(F.Constraints.MinWidth,
+      btnDelete.Width + btnSave.Width + btnCancel.Width + 64);
 
     Helper.DB := ADB;
     Helper.Form := F;

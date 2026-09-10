@@ -30,6 +30,8 @@ type
 
 implementation
 
+uses uButtonShortcuts;
+
 {$R *.lfm}
 
 procedure TLoginForm.ApplyLoginLayout;
@@ -86,7 +88,7 @@ begin
   Y := lblPassword.Top + lblPassword.Height + 4;
   edtPassword.SetBounds(lblLogin.Left, Y, cbLogin.Width, FieldH);
 
-  BtnW := Max(90, Canvas.TextWidth('Отмена') + 28);
+  BtnW := Max(90, Canvas.TextWidth(btnCancel.Caption) + 28);
   Y := edtPassword.Top + edtPassword.Height + Gap + 8;
   btnOK.Width := Max(90, Canvas.TextWidth('Войти') + 28);
   btnOK.Height := BtnH;
@@ -103,6 +105,7 @@ end;
 
 procedure TLoginForm.FormCreate(Sender: TObject);
 begin
+  BindButtonShortcut(btnCancel, bsCancel);
   Caption := 'Вход в систему';
   Position := poScreenCenter;
   BorderStyle := bsDialog;

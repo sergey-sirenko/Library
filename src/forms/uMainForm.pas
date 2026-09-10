@@ -205,6 +205,7 @@ type
     procedure gridOverdueDblClick(Sender: TObject);
   private
     FDB: TLibraryDB;
+    FReflowingToolbar: Boolean;
     FReports: TReportService;
     FReportLines: TStringList;
     FIcons: TImageList;
@@ -226,6 +227,7 @@ type
     procedure RefreshCategories;
     procedure RefreshLocations;
     procedure ApplyUIFontSize;
+    procedure ToolbarResize(Sender: TObject);
     procedure ReflowToolbarPanel(APanel: TPanel);
     procedure ReflowSettingsPanel;
     procedure ApplyRoleUI;
@@ -254,6 +256,7 @@ type
     procedure ClampBooksCopiesPanelHeight;
     procedure SetupUIIcons;
     procedure ApplyButtonIcon(AButton: TBitBtn; AIndex: Integer);
+    procedure GridSorted(Sender: TObject);
     procedure GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: Integer);
     procedure GridPrepareCanvas(Sender: TObject; aCol, aRow: Integer;
       aState: TGridDrawState);
@@ -279,7 +282,7 @@ implementation
 {$R *.lfm}
 
 uses
-  FileUtil, LazFileUtils, StrUtils, Math, LCLIntf;
+  FileUtil, LazFileUtils, StrUtils, Math, LCLIntf, uGridSorting, uButtonShortcuts;
 
 const
   MIN_BOOK_COPY_PANEL_HEIGHT = 120;
@@ -336,6 +339,8 @@ begin
   FCancelButton.SetBounds(304, 78, 110, 30);
   FCancelButton.Caption := 'Отмена';
   FCancelButton.OnClick := @CancelClick;
+  BindButtonShortcut(FCancelButton, bsCancel);
+  FCancelButton.Left := ClientWidth - 16 - FCancelButton.Width;
 end;
 
 procedure TUpdateProgressForm.CancelClick(Sender: TObject);
@@ -740,6 +745,12 @@ begin
   end;
 end;
 
+procedure TMainForm.GridSorted(Sender: TObject);
+begin
+  RecalcGridRowHeights(Sender as TStringGrid);
+  UpdateGridActiveMarker(Sender as TStringGrid);
+end;
+
 procedure TMainForm.GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: Integer);
 begin
   if IsColumn and (Index = ACTIVE_MARKER_COL) then
@@ -1057,6 +1068,7 @@ begin
     Exit;
   end;
   gridLoans.Col := Col;
+  ApplyGridSorting(gridLoans);
 end;
 
 function TMainForm.CommitLoanDateCell(aCol, aRow: Integer; const AText: string;
@@ -1219,11 +1231,33 @@ begin
   if pcMain.HandleAllocated then
     RecreateWnd(pcMain);
   SetupUIIcons;
+  BindButtonShortcut(btnBookAdd, bsAdd);
+  BindButtonShortcut(btnBookEdit, bsEdit);
+  BindButtonShortcut(btnBookDelete, bsDelete);
+  BindButtonShortcut(btnReaderAdd, bsAdd);
+  BindButtonShortcut(btnReaderEdit, bsEdit);
+  BindButtonShortcut(btnReaderDelete, bsDelete);
+  BindButtonShortcut(btnCatAdd, bsAdd);
+  BindButtonShortcut(btnCatEdit, bsEdit);
+  BindButtonShortcut(btnCatDelete, bsDelete);
+  BindButtonShortcut(btnLocAdd, bsAdd);
+  BindButtonShortcut(btnLocEdit, bsEdit);
+  BindButtonShortcut(btnLocDelete, bsDelete);
+  BindButtonShortcut(btnUserAdd, bsAdd);
+  BindButtonShortcut(btnUserEdit, bsEdit);
+  BindButtonShortcut(btnUserDelete, bsDelete);
+  BindButtonShortcut(btnBookSearch, bsFind);
+  BindButtonShortcut(btnReaderSearch, bsFind);
+  BindButtonShortcut(btnSaveSettings, bsSave);
+  BindButtonShortcut(btnReportShow, bsGenerate);
+  TButtonShortcuts.ForForm(Self).Bind(btnCopyAdd, bsAdd, [pnlCopiesBottom]);
+  TButtonShortcuts.ForForm(Self).Bind(btnCopyEdit, bsEdit, [pnlCopiesBottom]);
+  TButtonShortcuts.ForForm(Self).Bind(btnCopyDelete, bsDelete, [pnlCopiesBottom]);
   SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
   gridBooks.OnDblClick := @btnBookEditClick;
   edtBookSearch.Hint := 'Поиск по названию, автору или ISBN';
   edtBookSearchInv.Hint := 'Поиск по инвентарному номеру экземпляра';
-  edtBookSearch.Placeholder := 'По названию';
+  edtBookSearch.Placeholder := 'Название, автор или ISBN';
   edtBookSearchInv.Placeholder := 'По инв. №';
   edtBookSearchInv.OnKeyPress := @edtBookSearchInvKeyPress;
   SetupGrid(gridCopies, ['Инв. №', 'Статус', 'Место', 'Состояние', 'Удалён']);
@@ -1246,6 +1280,16 @@ begin
   SetupGrid(gridLocations, ['Наименование', 'Описание', 'Удалён']);
   gridLocations.OnDblClick := @btnLocEditClick;
   SetupGrid(gridReport, ['']);
+  TGridSorting.CreateFor(gridBooks, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridCopies, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridReaders, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridLoans, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridOverdue, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridUsers, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridJournal, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridCategories, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridLocations, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridReport, DATA_FIRST_COL, @GridSorted);
   UpdateDeletedColumnVisibility;
   FReportLines := TStringList.Create;
   cbReport.Items.Clear;
@@ -1258,6 +1302,15 @@ begin
   cbReport.Items.Add('Список читателей');
   cbReport.Items.Add('Журнал действий');
   cbReport.ItemIndex := 0;
+  pnlBooksTop.OnResize := @ToolbarResize;
+  pnlCopiesTop.OnResize := @ToolbarResize;
+  pnlReadersTop.OnResize := @ToolbarResize;
+  pnlLoansTop.OnResize := @ToolbarResize;
+  pnlCatTop.OnResize := @ToolbarResize;
+  pnlLocTop.OnResize := @ToolbarResize;
+  pnlUsersTop.OnResize := @ToolbarResize;
+  pnlReports.OnResize := @ToolbarResize;
+  pnlBackup.OnResize := @ToolbarResize;
 end;
 
 procedure TMainForm.ApplyButtonIcon(AButton: TBitBtn; AIndex: Integer);
@@ -1500,7 +1553,7 @@ begin
   finally
     List.Free;
   end;
-  RecalcGridRowHeights(gridBooks);
+  ApplyGridSorting(gridBooks);
   if KeepID > 0 then
     SelectGridEntity(gridBooks, KeepID, False)
   else
@@ -1526,7 +1579,7 @@ begin
   begin
     gridCopies.Rows[1].Clear;
     gridCopies.Objects[0, 1] := nil;
-    RecalcGridRowHeights(gridCopies);
+    ApplyGridSorting(gridCopies);
     UpdateGridActiveMarker(gridCopies);
     Exit;
   end;
@@ -1556,7 +1609,7 @@ begin
   end
   else
     gridCopies.RowCount := Row;
-  RecalcGridRowHeights(gridCopies);
+  ApplyGridSorting(gridCopies);
   if KeepID > 0 then
     SelectGridEntity(gridCopies, KeepID, False)
   else
@@ -1595,7 +1648,7 @@ begin
   finally
     List.Free;
   end;
-  RecalcGridRowHeights(gridReaders);
+  ApplyGridSorting(gridReaders);
   if KeepID > 0 then
     SelectGridEntity(gridReaders, KeepID, False)
   else
@@ -1643,7 +1696,7 @@ begin
   end
   else
     gridLoans.RowCount := Row;
-  RecalcGridRowHeights(gridLoans);
+  ApplyGridSorting(gridLoans);
   if KeepID > 0 then
     SelectGridEntity(gridLoans, KeepID, False)
   else
@@ -1689,7 +1742,7 @@ begin
   finally
     List.Free;
   end;
-  RecalcGridRowHeights(gridOverdue);
+  ApplyGridSorting(gridOverdue);
   if KeepID > 0 then
     SelectGridEntity(gridOverdue, KeepID, False)
   else
@@ -1729,7 +1782,7 @@ begin
   end
   else
     gridUsers.RowCount := Row;
-  RecalcGridRowHeights(gridUsers);
+  ApplyGridSorting(gridUsers);
   if KeepID > 0 then
     SelectGridEntity(gridUsers, KeepID, False)
   else
@@ -1781,6 +1834,11 @@ begin
   cbOpenRouterModel.Text := AModel;
 end;
 
+procedure TMainForm.ToolbarResize(Sender: TObject);
+begin
+  ReflowToolbarPanel(TPanel(Sender));
+end;
+
 procedure TMainForm.ReflowToolbarPanel(APanel: TPanel);
 var
   List: TList;
@@ -1789,8 +1847,9 @@ var
   TextH, FieldH, Gap, Pad, X, Y, MaxBottom, W, GlyphW: Integer;
   Btn: TBitBtn;
 begin
-  if APanel = nil then
+  if (APanel = nil) or FReflowingToolbar then
     Exit;
+  FReflowingToolbar := True;
   TextH := Canvas.TextHeight('Ag');
   FieldH := TextH + 12;
   Gap := 8;
@@ -1806,7 +1865,9 @@ begin
     end;
     for I := 0 to List.Count - 2 do
       for J := I + 1 to List.Count - 1 do
-        if TControl(List[J]).Left < TControl(List[I]).Left then
+        if (TControl(List[J]).Top < TControl(List[I]).Top - 4) or
+          ((Abs(TControl(List[J]).Top - TControl(List[I]).Top) <= 4) and
+           (TControl(List[J]).Left < TControl(List[I]).Left)) then
         begin
           Tmp := TControl(List[I]);
           List[I] := List[J];
@@ -1838,6 +1899,8 @@ begin
       else if C is TEdit then
       begin
         W := Max(C.Width, 120);
+        if C = edtBookSearch then
+          W := Max(W, Canvas.TextWidth(edtBookSearch.Placeholder) + 24);
         C.SetBounds(X, Y, W, FieldH);
       end
       else if C is TComboBox then
@@ -1857,12 +1920,20 @@ begin
       else
         C.SetBounds(X, Y, Max(C.Width, 40), FieldH);
 
+      if (X > Pad) and (X + C.Width > APanel.ClientWidth - Pad) then
+      begin
+        X := Pad;
+        Y := MaxBottom + Gap;
+        C.Left := X;
+        C.Top := Y;
+      end;
       X := C.Left + C.Width + Gap;
       if C.Top + C.Height > MaxBottom then
         MaxBottom := C.Top + C.Height;
     end;
     APanel.Height := MaxBottom + Pad;
   finally
+    FReflowingToolbar := False;
     List.Free;
   end;
 end;
@@ -2059,7 +2130,7 @@ begin
     gridJournal.Rows[1].Clear
   else
     gridJournal.RowCount := Row;
-  RecalcGridRowHeights(gridJournal);
+  ApplyGridSorting(gridJournal);
   SelectNearestGridRow(gridJournal, gridJournal.Row, False);
 end;
 
@@ -2094,7 +2165,7 @@ begin
   end
   else
     gridCategories.RowCount := Row;
-  RecalcGridRowHeights(gridCategories);
+  ApplyGridSorting(gridCategories);
   if KeepID > 0 then
     SelectGridEntity(gridCategories, KeepID, False)
   else
@@ -2131,7 +2202,7 @@ begin
   end
   else
     gridLocations.RowCount := Row;
-  RecalcGridRowHeights(gridLocations);
+  ApplyGridSorting(gridLocations);
   if KeepID > 0 then
     SelectGridEntity(gridLocations, KeepID, False)
   else
@@ -2755,7 +2826,7 @@ begin
   finally
     Parts.Free;
   end;
-  RecalcGridRowHeights(gridReport);
+  ApplyGridSorting(gridReport);
   UpdateGridActiveMarker(gridReport);
 end;
 

@@ -19,7 +19,7 @@ function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
 implementation
 
 uses
-  LCLType;
+  LCLType, uGridSorting, uButtonShortcuts;
 
 const
   COL_FAVORITE = 0;
@@ -85,6 +85,7 @@ type
     FFilter: string;
     FFavoriteModels: TStringList;
     procedure LoadGrid(const APreferredId: string = ''; ASelectFirst: Boolean = False);
+    function SortKey(ACol, ARow: Integer): string;
     procedure UpdateStatus;
     function IsFavorite(const AModelId: string): Boolean;
     procedure ToggleFavorite(const AModelId: string);
@@ -212,6 +213,8 @@ begin
   FCancel.Caption := 'Отмена';
   FCancel.SetBounds(ClientWidth - 116, ClientHeight - 48, 100, 32);
   FCancel.OnClick := @CancelClick;
+  BindButtonShortcut(FCancel, bsCancel);
+  FCancel.Left := ClientWidth - 16 - FCancel.Width;
 
   FTimer := TTimer.Create(Self);
   FTimer.Interval := 350;
@@ -302,7 +305,7 @@ begin
   grid.ColWidths[COL_ID] := 382;
   grid.ColWidths[COL_PROMPT] := 150;
   grid.ColWidths[COL_COMPLETION] := 150;
-  grid.ColumnClickSorts := False;
+  TGridSorting.CreateFor(grid, 0, nil).OnKey := @SortKey;
   grid.OnDblClick := @gridDblClick;
   grid.OnMouseDown := @gridMouseDown;
   grid.OnKeyDown := @gridKeyDown;
@@ -316,6 +319,8 @@ begin
   btnCancel.Top := ClientHeight - MARGIN - BTN_H;
   btnCancel.Width := 140;
   btnCancel.Height := BTN_H;
+  BindButtonShortcut(btnCancel, bsCancel);
+  btnCancel.Left := ClientWidth - MARGIN - btnCancel.Width;
 
   btnOK := TBitBtn.Create(Self);
   btnOK.Parent := Self;
@@ -327,6 +332,7 @@ begin
   btnOK.Height := BTN_H;
   btnOK.Enabled := True;
   btnOK.ModalResult := mrOK;
+  btnOK.Left := btnCancel.Left - 8 - btnOK.Width;
 end;
 
 destructor TSelectModelForm.Destroy;
@@ -428,32 +434,32 @@ end;
 procedure TSelectModelForm.LoadGrid(const APreferredId: string;
   ASelectFirst: Boolean);
 var
-  i, Row, Pass: Integer;
+  i, Row: Integer;
   M: TModelInfo;
   SelectedId: string;
 begin
+  SelectedId := APreferredId;
+  if (SelectedId = '') and (grid.Row > 0) and (grid.Row < grid.RowCount) then
+    SelectedId := grid.Cells[COL_ID, grid.Row];
+  if SelectedId = '' then SelectedId := FCurrentId;
   grid.RowCount := 1;
   Row := 1;
-  { FAllModels уже отсортирован по цене. Двумя проходами выносим избранное
-    вверх, сохраняя сортировку по цене в обеих группах. }
-  for Pass := 0 to 1 do
-    for i := 0 to High(FAllModels) do
-    begin
-      M := FAllModels[i];
-      if IsFavorite(M.Id) <> (Pass = 0) then
-        Continue;
-      if (FFilter <> '') and (Pos(FFilter, LowerCase(M.Id)) = 0) then
-        Continue;
-      grid.RowCount := Row + 1;
-      if IsFavorite(M.Id) then
-        grid.Cells[COL_FAVORITE, Row] := '☑'
-      else
-        grid.Cells[COL_FAVORITE, Row] := '☐';
-      grid.Cells[COL_ID, Row] := M.Id;
-      grid.Cells[COL_PROMPT, Row] := FormatModelPrice(M.PromptPrice);
-      grid.Cells[COL_COMPLETION, Row] := FormatModelPrice(M.CompletionPrice);
-      Inc(Row);
-    end;
+  for i := 0 to High(FAllModels) do
+  begin
+    M := FAllModels[i];
+    if (FFilter <> '') and (Pos(FFilter, LowerCase(M.Id)) = 0) then
+      Continue;
+    grid.RowCount := Row + 1;
+    if IsFavorite(M.Id) then
+      grid.Cells[COL_FAVORITE, Row] := '☑'
+    else
+      grid.Cells[COL_FAVORITE, Row] := '☐';
+    grid.Cells[COL_ID, Row] := M.Id;
+    grid.Cells[COL_PROMPT, Row] := FormatModelPrice(M.PromptPrice);
+    grid.Cells[COL_COMPLETION, Row] := FormatModelPrice(M.CompletionPrice);
+    Inc(Row);
+  end;
+  ApplyGridSorting(grid);
   if ASelectFirst and (grid.RowCount > 1) then
   begin
     grid.Row := 1;
@@ -461,10 +467,6 @@ begin
   end
   else
   begin
-    if APreferredId <> '' then
-      SelectedId := APreferredId
-    else
-      SelectedId := FCurrentId;
     { Если целевая модель есть в списке — выделим и прокрутим к ней. }
     if SelectedId <> '' then
       for Row := 1 to grid.RowCount - 1 do
@@ -476,6 +478,26 @@ begin
         end;
   end;
   UpdateStatus;
+end;
+
+function TSelectModelForm.SortKey(ACol, ARow: Integer): string;
+var
+  I: Integer;
+  Price: Double;
+  FS: TFormatSettings;
+begin
+  Result := grid.Cells[ACol, ARow];
+  if (ACol <> COL_PROMPT) and (ACol <> COL_COMPLETION) then Exit;
+  for I := 0 to High(FAllModels) do
+    if FAllModels[I].Id = grid.Cells[COL_ID, ARow] then
+    begin
+      if ACol = COL_PROMPT then Price := FAllModels[I].PromptPrice
+      else Price := FAllModels[I].CompletionPrice;
+      if Price < 0 then Exit('');
+      FS := DefaultFormatSettings;
+      FS.DecimalSeparator := '.';
+      Exit(FloatToStr(Price, FS));
+    end;
 end;
 
 function TSelectModelForm.IsFavorite(const AModelId: string): Boolean;
