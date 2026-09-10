@@ -3,7 +3,34 @@ program OpenLibraryTests;
 {$mode objfpc}{$H+}
 
 uses
-  Classes, SysUtils, FileUtil, uOpenLibrary, uOpenRouter, uTypes;
+  Classes, SysUtils, FileUtil, uOpenLibrary, uOpenRouter, uTypes, uBookHttp;
+
+type
+  TNoRslSession = class(TBookHttpSession)
+    function Request(const AMethod, AURL, ABody: string; out AStatus: Cardinal;
+      out AResponse, AError: string): Boolean; override;
+  end;
+
+function TNoRslSession.Request(const AMethod, AURL, ABody: string;
+  out AStatus: Cardinal; out AResponse, AError: string): Boolean;
+begin
+  AStatus := 503;
+  AResponse := '';
+  AError := 'Тест: РГБ недоступна';
+  Result := False;
+end;
+
+function TestLookup(const ISBN, Dir, Key: string; out Data: TOpenLibraryBookData;
+  out Warning, Err: string; Getter: TOpenLibraryHttpGet): Boolean;
+var Session: TNoRslSession;
+begin
+  Session := TNoRslSession.Create;
+  try
+    Result := LookupBookByISBN(ISBN, Dir, Key, Data, Warning, Err, Getter, Session);
+  finally
+    Session.Free;
+  end;
+end;
 
 var
   Failures: Integer = 0;
@@ -217,7 +244,7 @@ begin
   Check(ParseOpenLibrarySearchResponse(Response, '5170196369', Data, Found, Err),
     'русское издание в транслитерации разбирается: ' + Err);
   CheckEqual('Uspeshnyj rukovoditel'' (The Complete Idiot''s Guide To)',
-    Data.Title, 'API-парсер сохраняет исходное название для проверки моделью');
+    Data.Title, 'API-парсер сохраняет исходное название без языкового преобразования');
   CheckEqual('E. Dubrin', Data.Authors,
     'API-парсер сохраняет исходное имя автора');
   CheckEqual('AST', Data.Publisher,
@@ -369,7 +396,7 @@ begin
     MockMode := 6;
     MockGoogleCalled := False;
     MockGoogleKeyPassed := False;
-    Check(LookupBookByISBN('978-5-17-019636-4', Dir, 'test-google-key',
+    Check(TestLookup('978-5-17-019636-4', Dir, 'test-google-key',
       Data, WarningText, Err, @MockHttpGet),
       'Google Books вызывается после пустого ответа Open Library: ' + Err);
     Check(MockGoogleCalled and MockGoogleKeyPassed,
@@ -382,7 +409,7 @@ begin
 
     MockMode := 9;
     MockGoogleCalled := False;
-    Check(LookupBookByISBN('978-5-17-019636-4', Dir, 'test-google-key',
+    Check(TestLookup('978-5-17-019636-4', Dir, 'test-google-key',
       Data, WarningText, Err, @MockHttpGet),
       'Open Library без кириллического названия переключается на Google Books: ' + Err);
     Check(MockGoogleCalled and (Data.Source = olsGoogleBooks) and
@@ -390,24 +417,24 @@ begin
       'Google Books возвращает кириллический результат после Open Library');
 
     MockMode := 10;
-    Check(not LookupBookByISBN('978-5-17-019636-4', Dir, 'test-google-key',
+    Check(not TestLookup('978-5-17-019636-4', Dir + 'missing', 'test-google-key',
       Data, WarningText, Err, @MockHttpGet) and
       (Pos('кириллическим названием', Err) > 0),
       'два источника без кириллического названия завершаются ошибкой');
 
     MockMode := 7;
-    Check(not LookupBookByISBN('978-5-17-019636-4', Dir, '', Data,
+    Check(not TestLookup('978-5-17-019636-4', Dir + 'missing', '', Data,
       WarningText, Err, @MockHttpGet) and
       (Pos('кириллическим названием', Err) > 0),
       'отсутствие книги у обоих источников показано пользователю');
 
     MockMode := 8;
-    Check(not LookupBookByISBN('978-5-17-019636-4', Dir, '', Data,
+    Check(not TestLookup('978-5-17-019636-4', Dir + 'missing', '', Data,
       WarningText, Err, @MockHttpGet) and (Pos('квоты', Err) > 0),
       'ошибка квоты Google Books объясняется пользователю');
 
     MockMode := 2;
-    Check(LookupBookByISBN('978-5-17-019636-4', Dir, '', Data,
+    Check(TestLookup('978-5-17-019636-4', Dir, '', Data,
       WarningText, Err, @MockHttpGet) and (Data.Source = olsCache),
       'кэш Google Books доступен при сетевой ошибке');
   finally
@@ -429,7 +456,7 @@ begin
     Check((Data.Title <> '') and (Data.Authors <> '') and
       (Data.Year = 2005) and (Data.Publisher <> '') and
       SameText(Data.Language, 'rus'),
-      'реальный ответ возвращает исходные данные ISBN для проверки моделью');
+      'реальный ответ возвращает исходные данные ISBN без языкового преобразования');
   finally
     DeleteDirectory(Dir, False);
   end;

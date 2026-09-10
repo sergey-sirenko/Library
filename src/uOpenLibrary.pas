@@ -5,10 +5,10 @@ unit uOpenLibrary;
 interface
 
 uses
-  Classes, SysUtils, uTypes;
+  Classes, SysUtils, uTypes, uBookHttp;
 
 type
-  TOpenLibrarySource = (olsOnline, olsGoogleBooks, olsCache);
+  TOpenLibrarySource = (olsOnline, olsGoogleBooks, olsCache, olsRsl);
 
   TOpenLibraryBookData = record
     NormalizedISBN: string;
@@ -23,11 +23,23 @@ type
     CoverURL: string;
     CoverCacheFile: string;
     Source: TOpenLibrarySource;
+    FromCache: Boolean;
+    TextIsPlain: Boolean;
+    Origin: TOpenLibrarySource;
+    SourceURL: string;
+    Warnings: string;
   end;
+
+  TBookCandidates = array of TOpenLibraryBookData;
+  TBookCandidateSelector = function(const AItems: TBookCandidates): Integer of object;
 
   TOpenLibraryHttpGet = function(const AURL: string; out AStatusCode: Cardinal;
     out AResponseBody, AError: string): Boolean;
 
+function EquivalentISBN(const A, B: string): Boolean;
+function ValidateBookData(const AISBN: string; var AData: TOpenLibraryBookData;
+  out AError: string): Boolean;
+function BookSourceName(const AData: TOpenLibraryBookData): string;
 procedure ClearOpenLibraryBookData(var AData: TOpenLibraryBookData);
 function NormalizeISBN(const AISBN: string; out ANormalized,
   AError: string): Boolean;
@@ -50,12 +62,14 @@ function LookupOpenLibraryBook(const AISBN, ACacheDir: string;
   AHttpGet: TOpenLibraryHttpGet = nil): Boolean;
 function LookupBookByISBN(const AISBN, ACacheDir, AGoogleBooksApiKey: string;
   out AData: TOpenLibraryBookData; out AWarning, AError: string;
-  AHttpGet: TOpenLibraryHttpGet = nil): Boolean;
+  AHttpGet: TOpenLibraryHttpGet = nil;
+  ARslSession: TBookHttpSession = nil;
+  ASelect: TBookCandidateSelector = nil): Boolean;
 
 implementation
 
 uses
-  fpjson, jsonparser, FileUtil, uOpenRouter;
+  fpjson, jsonparser, FileUtil, uBookText, uRsl;
 
 const
   OPENLIBRARY_SEARCH_URL = 'https://openlibrary.org/search.json?q=isbn%3A';
@@ -66,15 +80,86 @@ const
     'editions.title,editions.publish_date,editions.publisher,editions.isbn,' +
     'editions.language&limit=10';
   OPENLIBRARY_RUSSIAN_LANGUAGE_FILTER = '+language%3Arus';
-  OPENLIBRARY_TIMEOUT_MS = 15000;
-  OPENLIBRARY_REQUEST_DELAY_MS = 350;
   GOOGLE_BOOKS_URL = 'https://www.googleapis.com/books/v1/volumes?q=isbn%3A';
   MAX_COVER_SIZE = 10 * 1024 * 1024;
 
+function HasCyrillicTitle(const ATitle: string): Boolean; forward;
 function JSONFirstText(AData: TJSONData): string; forward;
 function JSONTextArrayByName(AObject: TJSONObject; const AName: string): string; forward;
-function StripHtml(const AValue: string): string; forward;
-function ExtractYear(const AValue: string): Integer; forward;
+
+function CanonicalISBN(const S: string): string;
+var Err: string; I, Sum: Integer;
+begin
+  if not NormalizeISBN(S, Result, Err) then Exit('');
+  if Length(Result) = 10 then
+  begin
+    Result := '978' + Copy(Result, 1, 9);
+    Sum := 0;
+    for I := 1 to 12 do
+      if Odd(I) then Inc(Sum, Ord(Result[I]) - 48)
+      else Inc(Sum, 3 * (Ord(Result[I]) - 48));
+    Result := Result + IntToStr((10 - Sum mod 10) mod 10);
+  end;
+end;
+
+function EquivalentISBN(const A, B: string): Boolean;
+var Key: string;
+begin
+  Key := CanonicalISBN(A);
+  Result := (Key <> '') and (Key = CanonicalISBN(B));
+end;
+
+function BookSourceName(const AData: TOpenLibraryBookData): string;
+var Source: TOpenLibrarySource;
+begin
+  Source := AData.Source;
+  if AData.FromCache then Source := AData.Origin;
+  case Source of
+    olsOnline: Result := 'Open Library';
+    olsGoogleBooks: Result := 'Google Books';
+    olsRsl: Result := 'РГБ';
+    else Result := 'неизвестный источник';
+  end;
+  if AData.FromCache then Result := Result + ' (локальный кэш)';
+end;
+
+function ValidateBookData(const AISBN: string; var AData: TOpenLibraryBookData;
+  out AError: string): Boolean;
+var W: string;
+  procedure Clean(var S: string; const LabelText: string);
+  begin
+    W := EncodingWarning(S);
+    if W <> '' then AddBookWarning(AData.Warnings, LabelText + ': ' + W);
+    if AData.TextIsPlain then S := PlainBookText(S)
+    else S := HTMLText(S);
+    W := TextWarning(S);
+    if W <> '' then AddBookWarning(AData.Warnings, LabelText + ': ' + W);
+  end;
+begin
+  Result := False;
+  AError := '';
+  if not EquivalentISBN(AISBN, AData.NormalizedISBN) then
+  begin
+    AError := 'ISBN записи не совпадает с запросом.';
+    Exit;
+  end;
+  Clean(AData.Title, 'Название');
+  Clean(AData.Authors, 'Авторы');
+  Clean(AData.Publisher, 'Издательство');
+  Clean(AData.Description, 'Описание');
+  Clean(AData.CategoryName, 'Категория');
+  AData.TextIsPlain := True;
+  if AData.Title = '' then AError := 'В записи отсутствует название.'
+  else if not HasCyrillicTitle(AData.Title) then
+    AError := 'Не найдена запись с кириллическим названием.';
+  if AError <> '' then Exit;
+  if AData.Year <> 0 then
+  begin
+    AData.Year := CheckedYear(IntToStr(AData.Year), W);
+    AddBookWarning(AData.Warnings, W);
+  end;
+  Result := True;
+end;
 
 procedure ClearOpenLibraryBookData(var AData: TOpenLibraryBookData);
 begin
@@ -90,6 +175,11 @@ begin
   AData.CoverURL := '';
   AData.CoverCacheFile := '';
   AData.Source := olsOnline;
+  AData.Origin := olsOnline;
+  AData.FromCache := False;
+  AData.TextIsPlain := False;
+  AData.SourceURL := '';
+  AData.Warnings := '';
 end;
 
 function GoogleVolumeHasISBN(AInfo: TJSONObject;
@@ -112,7 +202,7 @@ begin
     begin
       Identifier := TJSONObject(Identifiers[I]).Get('identifier', '');
       if NormalizeISBN(Identifier, Normalized, Err) and
-        (Normalized = ANormalizedISBN) then
+        EquivalentISBN(Normalized, ANormalizedISBN) then
         Exit(True);
     end;
 end;
@@ -163,7 +253,7 @@ var
   Items: TJSONArray;
   Item, Info: TJSONObject;
   I: Integer;
-  Subtitle: string;
+  Subtitle, YearWarning: string;
 begin
   Result := False;
   AFound := False;
@@ -198,26 +288,31 @@ begin
           Continue;
         if not GoogleVolumeHasISBN(Info, ANormalizedISBN) then
           Continue;
+        ClearOpenLibraryBookData(AData);
+        AData.NormalizedISBN := ANormalizedISBN;
         AData.Title := Trim(Info.Get('title', ''));
         Subtitle := Trim(Info.Get('subtitle', ''));
         if (AData.Title <> '') and (Subtitle <> '') then
           AData.Title := AData.Title + ': ' + Subtitle;
-        if not HasCyrillicTitle(AData.Title) then
-          Continue;
         AData.Authors := JSONTextArrayByName(Info, 'authors');
         AData.Publisher := Trim(Info.Get('publisher', ''));
-        AData.Year := ExtractYear(Info.Get('publishedDate', ''));
-        AData.Description := StripHtml(Info.Get('description', ''));
+        AData.Year := CheckedYear(Info.Get('publishedDate', ''), YearWarning);
+        AddBookWarning(AData.Warnings, YearWarning);
+        AData.Description := Info.Get('description', '');
         AData.CategoryName := Trim(Info.Get('mainCategory', ''));
         if AData.CategoryName = '' then
           AData.CategoryName := JSONFirstText(Info.Find('categories'));
         AData.Language := 'ru';
         AData.CoverURL := GoogleCoverURL(Info);
         AData.Source := olsGoogleBooks;
+        AData.Origin := olsGoogleBooks;
+        AData.SourceURL := Info.Get('infoLink', 'https://books.google.com/');
+        if not ValidateBookData(ANormalizedISBN, AData, AError) then Continue;
         AFound := True;
         Result := True;
         Exit;
       end;
+      AError := '';
       Result := True;
     except
       on E: Exception do
@@ -276,6 +371,11 @@ begin
   end
   else if Length(ANormalized) = 13 then
   begin
+    if (Copy(ANormalized, 1, 3) <> '978') and (Copy(ANormalized, 1, 3) <> '979') then
+    begin
+      AError := 'ISBN-13 должен начинаться с 978 или 979.';
+      Exit;
+    end;
     Sum := 0;
     for I := 1 to 13 do
     begin
@@ -348,30 +448,6 @@ begin
   Result := JSONTextArray(AObject.Find(AName));
 end;
 
-function StripHtml(const AValue: string): string;
-var
-  I: Integer;
-  InTag: Boolean;
-begin
-  Result := '';
-  InTag := False;
-  for I := 1 to Length(AValue) do
-  begin
-    if AValue[I] = '<' then
-      InTag := True
-    else if AValue[I] = '>' then
-      InTag := False
-    else if not InTag then
-      Result := Result + AValue[I];
-  end;
-  Result := StringReplace(Result, '&nbsp;', ' ', [rfReplaceAll, rfIgnoreCase]);
-  Result := StringReplace(Result, '&quot;', '"', [rfReplaceAll, rfIgnoreCase]);
-  Result := StringReplace(Result, '&amp;', '&', [rfReplaceAll, rfIgnoreCase]);
-  Result := StringReplace(Result, '&lt;', '<', [rfReplaceAll, rfIgnoreCase]);
-  Result := StringReplace(Result, '&gt;', '>', [rfReplaceAll, rfIgnoreCase]);
-  Result := Trim(Result);
-end;
-
 function JSONContainsText(AData: TJSONData; const AValue: string): Boolean;
 var
   I: Integer;
@@ -389,23 +465,6 @@ begin
   Result := SameText(Trim(AData.AsString), AValue);
 end;
 
-function ExtractYear(const AValue: string): Integer;
-var
-  I, Candidate: Integer;
-  Part: string;
-begin
-  Result := 0;
-  for I := 1 to Length(AValue) - 3 do
-  begin
-    Part := Copy(AValue, I, 4);
-    if (Part[1] in ['0'..'9']) and (Part[2] in ['0'..'9']) and
-      (Part[3] in ['0'..'9']) and (Part[4] in ['0'..'9']) and
-      TryStrToInt(Part, Candidate) and (Candidate >= 1) and
-      (Candidate <= 9999) then
-      Exit(Candidate);
-  end;
-end;
-
 function JSONArrayContainsISBN(AData: TJSONData;
   const ANormalizedISBN: string): Boolean;
 var
@@ -419,7 +478,7 @@ begin
   begin
     Value := JSONFirstText(TJSONArray(AData)[I]);
     if NormalizeISBN(Value, Normalized, Err) and
-      (Normalized = ANormalizedISBN) then
+      EquivalentISBN(Normalized, ANormalizedISBN) then
       Exit(True);
   end;
 end;
@@ -446,25 +505,6 @@ begin
       Exit(TJSONObject(Docs[I]));
 end;
 
-function FindFirstEdition(AWork: TJSONObject): TJSONObject;
-var
-  EditionsData, DocsData: TJSONData;
-  Docs: TJSONArray;
-  I: Integer;
-begin
-  Result := nil;
-  EditionsData := AWork.Find('editions');
-  if not (EditionsData is TJSONObject) then
-    Exit;
-  DocsData := TJSONObject(EditionsData).Find('docs');
-  if not (DocsData is TJSONArray) then
-    Exit;
-  Docs := TJSONArray(DocsData);
-  for I := 0 to Docs.Count - 1 do
-    if Docs[I] is TJSONObject then
-      Exit(TJSONObject(Docs[I]));
-end;
-
 function ParseOpenLibrarySearchResponse(const AResponse, ANormalizedISBN: string;
   out AData: TOpenLibraryBookData; out AFound: Boolean;
   out AError: string): Boolean;
@@ -474,7 +514,7 @@ var
   Docs: TJSONArray;
   Work, CandidateWork, Edition: TJSONObject;
   I: Integer;
-  PublishDate: string;
+  PublishDate, YearWarning: string;
 begin
   Result := False;
   AFound := False;
@@ -510,16 +550,12 @@ begin
           end;
         end;
       if Work = nil then
-        for I := 0 to Docs.Count - 1 do
-          if Docs[I] is TJSONObject then
-          begin
-            Work := TJSONObject(Docs[I]);
-            Edition := FindFirstEdition(Work);
-            Break;
-          end;
-      if Work = nil then
-        raise Exception.Create('в ответе нет записи произведения');
+      begin
+        Result := True;
+        Exit;
+      end;
       AData.WorkKey := JSONFirstText(Work.Find('key'));
+      AData.SourceURL := OPENLIBRARY_BASE_URL + AData.WorkKey;
       AData.Title := JSONFirstText(Work.Find('title'));
       AData.Authors := JSONTextArray(Work.Find('author_name'));
       AData.CategoryName := JSONFirstText(Work.Find('subject'));
@@ -537,7 +573,8 @@ begin
         else if JSONFirstText(Edition.Find('language')) <> '' then
           AData.Language := JSONFirstText(Edition.Find('language'));
         PublishDate := JSONFirstText(Edition.Find('publish_date'));
-        AData.Year := ExtractYear(PublishDate);
+        AData.Year := CheckedYear(PublishDate, YearWarning);
+        AddBookWarning(AData.Warnings, YearWarning);
       end;
       AFound := True;
       Result := True;
@@ -655,6 +692,11 @@ begin
   end;
   Root := TJSONObject.Create;
   try
+    Root.Add('version', 2);
+    Root.Add('plain_text', AData.TextIsPlain);
+    Root.Add('origin', Ord(AData.Origin));
+    Root.Add('source_url', AData.SourceURL);
+    Root.Add('warnings', AData.Warnings);
     Root.Add('isbn', AData.NormalizedISBN);
     Root.Add('title', AData.Title);
     Root.Add('authors', AData.Authors);
@@ -698,6 +740,7 @@ function LoadOpenLibraryCache(const ACacheDir, ANormalizedISBN: string;
 var
   Root: TJSONData;
   FileName, CoverName: string;
+  SourceValue: Integer;
 begin
   Result := False;
   AError := '';
@@ -714,6 +757,9 @@ begin
       Root := GetJSON(ReadFileBytes(FileName));
       if not (Root is TJSONObject) then
         raise Exception.Create('запись кэша не является JSON-объектом');
+      if TJSONObject(Root).Get('version', 1) > 2 then
+        raise Exception.Create('неизвестная версия кэша');
+      AData.TextIsPlain := TJSONObject(Root).Get('plain_text', False);
       AData.NormalizedISBN := NormalizeISBNFormat(
         TJSONObject(Root).Get('isbn', ANormalizedISBN));
       AData.Title := TJSONObject(Root).Get('title', '');
@@ -734,6 +780,15 @@ begin
       if not FileExists(AData.CoverCacheFile) then
         AData.CoverCacheFile := '';
       AData.Source := olsCache;
+      AData.FromCache := True;
+      SourceValue := TJSONObject(Root).Get('origin', TJSONObject(Root).Get('source', 2));
+      if (SourceValue < 0) or (SourceValue > Ord(High(TOpenLibrarySource))) then
+        SourceValue := Ord(olsCache);
+      AData.Origin := TOpenLibrarySource(SourceValue);
+      AData.SourceURL := TJSONObject(Root).Get('source_url', '');
+      AData.Warnings := TJSONObject(Root).Get('warnings', '');
+      if not ValidateBookData(ANormalizedISBN, AData, AError) then
+        raise Exception.Create(AError);
       if (Trim(AData.Title) = '') and (Trim(AData.Authors) = '') and
         (AData.Year = 0) and (Trim(AData.Publisher) = '') and
         (Trim(AData.Description) = '') and
@@ -793,14 +848,20 @@ begin
   end;
 end;
 
+threadvar
+  CurrentBookSession: TBookHttpSession;
+
 function DefaultHttpGet(const AURL: string; out AStatusCode: Cardinal;
   out AResponseBody, AError: string): Boolean;
-var
-  Status: Cardinal;
+var Session: TBookHttpSession;
 begin
-  Result := HttpRequest('GET', AURL, '', '', Status, AResponseBody, AError,
-    OPENLIBRARY_TIMEOUT_MS);
-  AStatusCode := Status;
+  Session := CurrentBookSession;
+  if Session = nil then Session := TBookHttpSession.Create;
+  try
+    Result := Session.Request('GET', AURL, '', AStatusCode, AResponseBody, AError);
+  finally
+    if CurrentBookSession = nil then Session.Free;
+  end;
 end;
 
 procedure AppendWarning(var AWarning: string; const AValue: string);
@@ -815,13 +876,13 @@ end;
 function LookupOpenLibraryBookInternal(const AISBN, ACacheDir: string;
   out AData: TOpenLibraryBookData; out AWarning, AError: string;
   out ANotFound: Boolean;
-  AHttpGet: TOpenLibraryHttpGet): Boolean;
+  AHttpGet: TOpenLibraryHttpGet; AAllowCache: Boolean = True): Boolean;
 var
   Getter: TOpenLibraryHttpGet;
   Normalized, Response, NetworkError, ParseError, CacheError: string;
   WorkError, CoverError, CacheSaveError, CoverFile: string;
   Status: Cardinal;
-  Found, OnlineFailed, UseDelay: Boolean;
+  Found, OnlineFailed: Boolean;
 begin
   Result := False;
   ANotFound := False;
@@ -831,7 +892,6 @@ begin
   if not NormalizeISBN(AISBN, Normalized, AError) then
     Exit;
   Getter := AHttpGet;
-  UseDelay := not Assigned(Getter);
   if not Assigned(Getter) then
     Getter := @DefaultHttpGet;
 
@@ -860,7 +920,7 @@ begin
 
   if OnlineFailed then
   begin
-    if LoadOpenLibraryCache(ACacheDir, Normalized, AData, CacheError) then
+    if AAllowCache and LoadOpenLibraryCache(ACacheDir, Normalized, AData, CacheError) then
     begin
       if not HasCyrillicTitle(AData.Title) then
       begin
@@ -890,8 +950,6 @@ begin
   AData.CoverURL := OPENLIBRARY_COVER_URL + Normalized + '-L.jpg?default=false';
   if AData.WorkKey <> '' then
   begin
-    if UseDelay then
-      Sleep(OPENLIBRARY_REQUEST_DELAY_MS);
     Status := 0;
     Response := '';
     WorkError := '';
@@ -911,8 +969,6 @@ begin
     end;
   end;
 
-  if UseDelay then
-    Sleep(OPENLIBRARY_REQUEST_DELAY_MS);
   Status := 0;
   Response := '';
   CoverError := '';
@@ -933,10 +989,8 @@ begin
       AppendWarning(AWarning, 'Обложка не загружена: HTTP ' +
         IntToStr(Status) + '.');
   end;
-  if (AData.CoverCacheFile = '') and
-    FileExists(CacheCoverFile(ACacheDir, Normalized)) then
-    AData.CoverCacheFile := CacheCoverFile(ACacheDir, Normalized);
 
+  if not ValidateBookData(AData.NormalizedISBN, AData, AError) then Exit;
   if not SaveOpenLibraryCache(ACacheDir, AData, CacheSaveError) then
     AppendWarning(AWarning, CacheSaveError);
   Result := True;
@@ -959,7 +1013,7 @@ function LookupGoogleBooks(const ANormalizedISBN, ACacheDir,
   out AWarning, AError: string; AHttpGet: TOpenLibraryHttpGet): Boolean;
 var
   Getter: TOpenLibraryHttpGet;
-  Url, Response, NetworkError, ParseError, CacheError: string;
+  Url, Response, NetworkError, ParseError: string;
   CoverError, CacheSaveError, CoverFile: string;
   Status: Cardinal;
   Found: Boolean;
@@ -979,12 +1033,6 @@ begin
   NetworkError := '';
   if not Getter(Url, Status, Response, NetworkError) then
   begin
-    if LoadOpenLibraryCache(ACacheDir, ANormalizedISBN, AData, CacheError) and
-      HasCyrillicTitle(AData.Title) then
-    begin
-      AWarning := 'Нет доступа к Google Books. Использованы данные из локального кэша.';
-      Exit(True);
-    end;
     AError := 'Не удалось получить данные Google Books: ' + NetworkError;
     Exit;
   end;
@@ -1032,9 +1080,7 @@ begin
           IntToStr(Status) + '.');
     end;
   end;
-  if (AData.CoverCacheFile = '') and
-    FileExists(CacheCoverFile(ACacheDir, ANormalizedISBN)) then
-    AData.CoverCacheFile := CacheCoverFile(ACacheDir, ANormalizedISBN);
+  if not ValidateBookData(AData.NormalizedISBN, AData, AError) then Exit;
   if not SaveOpenLibraryCache(ACacheDir, AData, CacheSaveError) then
     AppendWarning(AWarning, CacheSaveError);
   Result := True;
@@ -1042,39 +1088,89 @@ end;
 
 function LookupBookByISBN(const AISBN, ACacheDir, AGoogleBooksApiKey: string;
   out AData: TOpenLibraryBookData; out AWarning, AError: string;
-  AHttpGet: TOpenLibraryHttpGet): Boolean;
+  AHttpGet: TOpenLibraryHttpGet; ARslSession: TBookHttpSession;
+  ASelect: TBookCandidateSelector): Boolean;
 var
-  Normalized: string;
-  OpenLibraryWarning, GoogleWarning: string;
-  NotFound: Boolean;
+  Normalized, Errors, Warn, Err: string;
+  NotFound, Found: Boolean;
+  Items: TBookCandidates;
+  Index: Integer;
+  PreviousSession: TBookHttpSession;
+  procedure Finish;
+  begin
+    AError := '';
+    AWarning := Errors;
+    AddBookWarning(AWarning, Warn);
+    AddBookWarning(AWarning, 'Источник данных: ' + BookSourceName(AData) + '.');
+    AddBookWarning(AWarning, AData.Warnings);
+    Result := True;
+  end;
 begin
   Result := False;
   AWarning := '';
   AError := '';
   ClearOpenLibraryBookData(AData);
-  if not NormalizeISBN(AISBN, Normalized, AError) then
-    Exit;
-  if LookupOpenLibraryBookInternal(AISBN, ACacheDir, AData, OpenLibraryWarning,
-    AError, NotFound, AHttpGet) then
+  if not NormalizeISBN(AISBN, Normalized, AError) then Exit;
+  Errors := '';
+  Warn := '';
+  if LookupRsl(Normalized, ARslSession, Items, Err) and (Length(Items) > 0) then
   begin
-    if AData.Source = olsCache then
-      AppendWarning(AWarning, 'Источник данных: локальный кэш.')
-    else
-      AppendWarning(AWarning, 'Источник данных: Open Library.');
-    AppendWarning(AWarning, OpenLibraryWarning);
-    Exit(True);
+    Index := 0;
+    if Length(Items) > 1 then
+    begin
+      if not Assigned(ASelect) then
+      begin
+        AError := 'РГБ вернула несколько записей: требуется выбор книги.';
+        Exit;
+      end;
+      Index := ASelect(Items);
+      if (Index < 0) or (Index > High(Items)) then Exit;
+    end;
+    AData := Items[Index];
+    if not SaveOpenLibraryCache(ACacheDir, AData, Err) then Warn := Err;
+    Finish;
+    Exit;
   end;
-  if not NotFound then
+  if Err = '' then Err := 'РГБ: подходящая книга не найдена.';
+  AddBookWarning(Errors, Err);
+  PreviousSession := CurrentBookSession;
+  CurrentBookSession := TBookHttpSession.Create;
+  try
+    Found := LookupOpenLibraryBookInternal(Normalized, ACacheDir, AData, Warn,
+      Err, NotFound, AHttpGet, False);
+  finally
+    CurrentBookSession.Free;
+    CurrentBookSession := PreviousSession;
+  end;
+  if Found then
+  begin
+    Finish;
     Exit;
-  if not LookupGoogleBooks(Normalized, ACacheDir, AGoogleBooksApiKey, AData,
-    GoogleWarning, AError, AHttpGet) then
+  end;
+  if Err = '' then Err := 'Open Library: подходящая книга не найдена.';
+  AddBookWarning(Errors, Err);
+  CurrentBookSession := TBookHttpSession.Create;
+  try
+    Found := LookupGoogleBooks(Normalized, ACacheDir, AGoogleBooksApiKey,
+      AData, Warn, Err, AHttpGet);
+  finally
+    CurrentBookSession.Free;
+    CurrentBookSession := PreviousSession;
+  end;
+  if Found then
+  begin
+    Finish;
     Exit;
-  if AData.Source = olsCache then
-    AppendWarning(AWarning, 'Источник данных: локальный кэш.')
-  else
-    AppendWarning(AWarning, 'Источник данных: Google Books.');
-  AppendWarning(AWarning, GoogleWarning);
-  Result := True;
+  end;
+  AddBookWarning(Errors, Err);
+  if LoadOpenLibraryCache(ACacheDir, Normalized, AData, Err) then
+  begin
+    Warn := 'Онлайн-поиск не дал результата; использованы данные из локального кэша.';
+    Finish;
+    Exit;
+  end;
+  AError := Errors;
+  AddBookWarning(AError, Err);
 end;
 
 end.

@@ -24,7 +24,7 @@ implementation
 
 uses
   LazUTF8, FPImage, FPReadJPEG, FPReadPNG, IntfGraphics, uOpenLibrary,
-  uOpenRouter, uGridSorting, uButtonShortcuts;
+  uGridSorting, uButtonShortcuts, uBookLookupDialogs;
 
 function FieldHeight(AForm: TForm): Integer;
 begin
@@ -304,13 +304,12 @@ type
     ShowSavedCover: Boolean;
     ResultID: TId;
     Saved: Boolean;
-    procedure ClearBookFields;
-    procedure SelectExistingCategory(const AName: string);
     procedure UpdateCoverPreview;
     procedure CoverPathChange(Sender: TObject);
     procedure FormResize(Sender: TObject);
     procedure FormShow(Sender: TObject);
     procedure FillISBNClick(Sender: TObject);
+    function SelectISBNBook(const Items: TBookCandidates): Integer;
     procedure ISBNKeyPress(Sender: TObject; var Key: Char);
     procedure ISBNChange(Sender: TObject);
     procedure OKClick(Sender: TObject);
@@ -430,38 +429,6 @@ begin
   end;
 end;
 
-procedure TBookDlgHelper.ClearBookFields;
-begin
-  eTitle.Clear;
-  eAuthors.Clear;
-  eYear.Clear;
-  ePublisher.Clear;
-  eDesc.Clear;
-  ShowSavedCover := False;
-  eCover.Clear;
-  cbCat.ItemIndex := 0;
-  UpdateCoverPreview;
-end;
-
-procedure TBookDlgHelper.SelectExistingCategory(const AName: string);
-var
-  I: Integer;
-  Category: TCategory;
-begin
-  if Trim(AName) = '' then
-    Exit;
-  for I := 0 to cbCat.Items.Count - 1 do
-    if cbCat.Items.Objects[I] <> nil then
-    begin
-      Category := TCategory(cbCat.Items.Objects[I]);
-      if UTF8CompareText(Trim(Category.Name), Trim(AName)) = 0 then
-      begin
-        cbCat.ItemIndex := I;
-        Exit;
-      end;
-    end;
-end;
-
 procedure TBookDlgHelper.UpdateCoverPreview;
 var
   FileName: string;
@@ -537,67 +504,85 @@ begin
   AWarning := AWarning + AValue;
 end;
 
+function TBookDlgHelper.SelectISBNBook(const Items: TBookCandidates): Integer;
+var OldCursor: TCursor;
+begin
+  OldCursor := Screen.Cursor;
+  Screen.Cursor := crDefault;
+  try
+    Result := uBookLookupDialogs.SelectISBNBook(Items, DB.Settings.UIFontSize);
+  finally
+    Screen.Cursor := OldCursor;
+  end;
+end;
+
 procedure TBookDlgHelper.FillISBNClick(Sender: TObject);
 var
   Data: TOpenLibraryBookData;
-  OriginalMetadata, LocalizedMetadata: TBookMetadataLocalization;
-  LocalizationStats: TRecognitionStats;
-  WarningText, Err, LocalizationError, OldCaption: string;
+  WarningText, Err, OldCaption, CategoryName: string;
   OldCursor: TCursor;
+  Fields: TBookFieldChanges;
+  Category: TCategory;
+  CategoryIndex, I: Integer;
+  procedure Field(Index: Integer; const Name, OldValue, NewValue: string);
+  begin
+    Fields[Index].Name := Name;
+    Fields[Index].OldValue := OldValue;
+    Fields[Index].NewValue := NewValue;
+  end;
 begin
   OldCaption := btnFillISBN.Caption;
-  ISBNChange(eISBN);
-  ClearBookFields;
   OldCursor := Screen.Cursor;
   btnFillISBN.Enabled := False;
   btnFillISBN.Caption := 'Загрузка...';
   Screen.Cursor := crHourGlass;
   try
     if not LookupBookByISBN(eISBN.Text, DB.Paths.OpenLibraryCacheDir,
-      DB.Settings.GoogleBooksApiKey, Data, WarningText, Err) then
+      DB.Settings.GoogleBooksApiKey, Data, WarningText, Err, nil, nil,
+      @SelectISBNBook) then
     begin
-      MessageDlg(Err, mtError, [mbOK], 0);
+      if Err <> '' then MessageDlg(Err, mtError, [mbOK], 0);
       Exit;
     end;
-    OriginalMetadata.ISBN := Data.NormalizedISBN;
-    OriginalMetadata.Language := Data.Language;
-    OriginalMetadata.Title := Data.Title;
-    OriginalMetadata.Authors := Data.Authors;
-    OriginalMetadata.Publisher := Data.Publisher;
-    OriginalMetadata.Description := Data.Description;
-    OriginalMetadata.CategoryName := Data.CategoryName;
-    if LocalizeBookMetadata(DB.Settings.OpenRouterModel,
-      DB.Settings.OpenRouterApiKey, OriginalMetadata, LocalizedMetadata,
-      LocalizationStats, LocalizationError) then
-    begin
-      Data.Title := LocalizedMetadata.Title;
-      Data.Authors := LocalizedMetadata.Authors;
-      Data.Publisher := LocalizedMetadata.Publisher;
-      Data.Description := LocalizedMetadata.Description;
-      Data.CategoryName := LocalizedMetadata.CategoryName;
-    end
-    else
-      AppendBookFillWarning(WarningText,
-        'Нейросетевая проверка русского текста не выполнена: ' +
-        LocalizationError);
-    if Data.Title <> '' then
-      eTitle.Text := Data.Title;
-    if Data.Authors <> '' then
-      eAuthors.Text := Data.Authors;
-    if Data.Year > 0 then
-      eYear.Text := IntToStr(Data.Year);
-    if Data.Publisher <> '' then
-      ePublisher.Text := Data.Publisher;
-    if Data.Description <> '' then
-      eDesc.Text := Data.Description;
-    if Data.CategoryName <> '' then
-      SelectExistingCategory(Data.CategoryName);
-    if Data.CoverCacheFile <> '' then
-      eCover.Text := Data.CoverCacheFile;
+    CategoryName := '';
+    CategoryIndex := -1;
+    for I := 0 to cbCat.Items.Count - 1 do
+      if cbCat.Items.Objects[I] <> nil then
+      begin
+        Category := TCategory(cbCat.Items.Objects[I]);
+        if not Category.Deleted and
+          (UTF8CompareText(Trim(Category.Name), Trim(Data.CategoryName)) = 0) then
+        begin
+          CategoryName := Category.Name;
+          CategoryIndex := I;
+          Break;
+        end;
+      end;
+    if (Data.CategoryName <> '') and (CategoryIndex < 0) then
+      AppendBookFillWarning(WarningText, 'Тема источника не совпала с существующей категорией: ' + Data.CategoryName);
+    SetLength(Fields, 7);
+    Field(0, 'Название', eTitle.Text, Data.Title);
+    Field(1, 'Авторы', eAuthors.Text, Data.Authors);
+    Field(2, 'Год', eYear.Text, '');
+    if Data.Year > 0 then Fields[2].NewValue := IntToStr(Data.Year);
+    Field(3, 'Издательство', ePublisher.Text, Data.Publisher);
+    Field(4, 'Описание', eDesc.Text, Data.Description);
+    Field(5, 'Категория', cbCat.Text, CategoryName);
+    if (cbCat.ItemIndex >= 0) and (cbCat.Items.Objects[cbCat.ItemIndex] = nil) then
+      Fields[5].OldValue := '';
+    Field(6, 'Обложка', eCover.Text, Data.CoverCacheFile);
+    if (Fields[6].OldValue = '') and ShowSavedCover and (Book <> nil) then
+      Fields[6].OldValue := Book.CoverFile;
+    Screen.Cursor := crDefault;
+    if not ReviewISBNBook(Data, WarningText, Fields, DB.Settings.UIFontSize) then Exit;
+    if Fields[0].Apply then eTitle.Text := Fields[0].NewValue;
+    if Fields[1].Apply then eAuthors.Text := Fields[1].NewValue;
+    if Fields[2].Apply then eYear.Text := Fields[2].NewValue;
+    if Fields[3].Apply then ePublisher.Text := Fields[3].NewValue;
+    if Fields[4].Apply then eDesc.Text := Fields[4].NewValue;
+    if Fields[5].Apply then cbCat.ItemIndex := CategoryIndex;
+    if Fields[6].Apply then eCover.Text := Fields[6].NewValue;
     UpdateCoverPreview;
-    if WarningText <> '' then
-      MessageDlg('Данные книги заполнены.' + LineEnding + LineEnding +
-        WarningText, mtWarning, [mbOK], 0);
   finally
     Screen.Cursor := OldCursor;
     btnFillISBN.Caption := OldCaption;
