@@ -2998,7 +2998,7 @@ begin
     MessageText := 'Доступна новая версия ' + ReleaseInfo.Version + '.' +
       LineEnding + 'Текущая версия: ' + APP_VERSION + '.' + LineEnding +
       LineEnding + 'Скачать и установить обновление? Перед установкой будет ' +
-      'создана резервная копия данных.';
+      'создана полная резервная копия программы и данных.';
     if MessageDlg(MessageText, mtConfirmation, [mbYes, mbNo], 0) <> mrYes then
       Exit;
 
@@ -3175,7 +3175,9 @@ begin
   Dir := FDB.Paths.BackupDir + lstBackups.Items[lstBackups.ItemIndex];
   if FDB.RestoreBackup(Dir, Err) then
   begin
-    MessageDlg('Данные восстановлены.', mtInformation, [mbOK], 0);
+    MessageDlg('Данные, обложки и настройки восстановлены.' +
+      LineEnding + 'Для аварийной замены файлов программы используйте ' +
+      'RESTORE.txt в каталоге копии.', mtInformation, [mbOK], 0);
     RefreshAll;
   end
   else

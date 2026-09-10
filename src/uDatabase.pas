@@ -2852,17 +2852,19 @@ begin
             (Ext = '.bak');
 end;
 
-function CopyDataFiles(const SrcDir, DstDir: string; out ACopied: Integer; out AError: string): Boolean;
+function CopyBackupFiles(const SrcDir, DstDir: string; ASkipTransient: Boolean;
+  out ACopied: Integer; out AError: string): Boolean;
 var
   SR: TSearchRec;
   Src, Dst: string;
+  NestedCopied: Integer;
 begin
   Result := False;
   ACopied := 0;
   AError := '';
   if not DirectoryExists(SrcDir) then
   begin
-    AError := 'Исходный каталог Data не найден.';
+    AError := 'Исходный каталог не найден: ' + SrcDir;
     Exit;
   end;
   ForceDirectories(DstDir);
@@ -2871,12 +2873,18 @@ begin
     repeat
       if (SR.Name = '.') or (SR.Name = '..') then
         Continue;
-      if (SR.Attr and faDirectory) <> 0 then
-        Continue;
-      if ShouldSkipBackupFile(SR.Name) then
+      if ASkipTransient and ShouldSkipBackupFile(SR.Name) then
         Continue;
       Src := IncludeTrailingPathDelimiter(SrcDir) + SR.Name;
       Dst := IncludeTrailingPathDelimiter(DstDir) + SR.Name;
+      if (SR.Attr and faDirectory) <> 0 then
+      begin
+        if not CopyBackupFiles(Src, Dst, ASkipTransient, NestedCopied,
+          AError) then
+          Exit;
+        Inc(ACopied, NestedCopied);
+        Continue;
+      end;
       if not CopyFile(Src, Dst, [cffOverwriteFile, cffPreserveTime]) then
       begin
         AError := 'Не удалось скопировать файл: ' + SR.Name;
@@ -2887,20 +2895,153 @@ begin
   finally
     FindClose(SR);
   end;
-  if ACopied = 0 then
+  Result := True;
+end;
+
+function CopyRequiredBackupFile(const Src, Dst, DisplayName: string;
+  out AError: string): Boolean;
+begin
+  Result := False;
+  if not FileExists(Src) then
   begin
-    AError := 'В каталоге Data нет файлов для копирования.';
+    AError := 'Обязательный файл не найден: ' + DisplayName;
+    Exit;
+  end;
+  if not CopyFile(Src, Dst, [cffOverwriteFile, cffPreserveTime]) then
+  begin
+    AError := 'Не удалось скопировать обязательный файл: ' + DisplayName;
     Exit;
   end;
   Result := True;
 end;
 
+function CopyOptionalBackupFile(const Src, Dst, DisplayName: string;
+  out AError: string): Boolean;
+begin
+  Result := True;
+  if not FileExists(Src) then
+    Exit;
+  if not CopyFile(Src, Dst, [cffOverwriteFile, cffPreserveTime]) then
+  begin
+    AError := 'Не удалось скопировать файл: ' + DisplayName;
+    Result := False;
+  end;
+end;
+
+function ClearRestoreDirectory(const ADir: string; ASkipTransient: Boolean;
+  out AError: string): Boolean;
+var
+  SR: TSearchRec;
+  FullName: string;
+begin
+  Result := False;
+  AError := '';
+  if not DirectoryExists(ADir) then
+  begin
+    ForceDirectories(ADir);
+    Result := True;
+    Exit;
+  end;
+  if FindFirst(IncludeTrailingPathDelimiter(ADir) + '*', faAnyFile, SR) = 0 then
+  try
+    repeat
+      if (SR.Name = '.') or (SR.Name = '..') then
+        Continue;
+      if ASkipTransient and ShouldSkipBackupFile(SR.Name) then
+        Continue;
+      FullName := IncludeTrailingPathDelimiter(ADir) + SR.Name;
+      if (SR.Attr and faDirectory) <> 0 then
+      begin
+        if not DeleteDirectory(FullName, False) then
+        begin
+          AError := 'Не удалось очистить каталог: ' + FullName;
+          Exit;
+        end;
+      end
+      else if not DeleteFile(FullName) then
+      begin
+        AError := 'Не удалось удалить файл: ' + FullName;
+        Exit;
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    FindClose(SR);
+  end;
+  Result := True;
+end;
+
+procedure AddManifestFiles(const ABaseDir, ADir: string; ALines: TStrings);
+var
+  SR: TSearchRec;
+  FullName, RelativeName: string;
+begin
+  if FindFirst(IncludeTrailingPathDelimiter(ADir) + '*', faAnyFile, SR) <> 0 then
+    Exit;
+  try
+    repeat
+      if (SR.Name = '.') or (SR.Name = '..') then
+        Continue;
+      FullName := IncludeTrailingPathDelimiter(ADir) + SR.Name;
+      if (SR.Attr and faDirectory) <> 0 then
+        AddManifestFiles(ABaseDir, FullName, ALines)
+      else
+      begin
+        RelativeName := Copy(FullName, Length(IncludeTrailingPathDelimiter(
+          ABaseDir)) + 1, MaxInt);
+        ALines.Add('File=' + RelativeName + ';Size=' + IntToStr(SR.Size));
+      end;
+    until FindNext(SR) <> 0;
+  finally
+    FindClose(SR);
+  end;
+end;
+
+function IsFullBackup(const ABackupDir: string; out AError: string): Boolean;
+var
+  Manifest: TStringList;
+  Root: string;
+begin
+  Result := False;
+  AError := '';
+  Root := IncludeTrailingPathDelimiter(ABackupDir);
+  if not FileExists(Root + 'manifest.txt') then
+  begin
+    AError := 'Выбрана старая или неполная резервная копия: ' +
+      'отсутствует manifest.txt.';
+    Exit;
+  end;
+  Manifest := TStringList.Create;
+  try
+    Manifest.LoadFromFile(Root + 'manifest.txt');
+    if Manifest.Values['BackupFormatVersion'] <> '2' then
+    begin
+      AError := 'Выбрана старая или неполная резервная копия. ' +
+        'Восстановление через программу доступно только для полных копий.';
+      Exit;
+    end;
+  finally
+    Manifest.Free;
+  end;
+  if not DirectoryExists(Root + 'Data') then
+    AError := 'В копии отсутствует каталог Data.'
+  else if not DirectoryExists(Root + 'Covers') then
+    AError := 'В копии отсутствует каталог Covers.'
+  else if not FileExists(Root + 'Library.exe') then
+    AError := 'В копии отсутствует Library.exe.'
+  else if not FileExists(Root + 'LibraryUpdater.exe') then
+    AError := 'В копии отсутствует LibraryUpdater.exe.'
+  else if not FileExists(Root + 'INSTALL.md') then
+    AError := 'В копии отсутствует INSTALL.md.'
+  else if not FileExists(Root + 'RESTORE.txt') then
+    AError := 'В копии отсутствует RESTORE.txt.';
+  Result := AError = '';
+end;
+
 function TLibraryDB.CreateBackup(out APath, AError: string): Boolean;
 var
-  Name, Dest, DestData, Manifest: string;
+  Name, BaseName, Dest, DestData, Manifest, Root: string;
   SL: TStringList;
-  SR: TSearchRec;
-  Copied: Integer;
+  Copied, CoverCopied, Suffix: Integer;
   CopyErr: string;
 begin
   Result := False;
@@ -2908,11 +3049,19 @@ begin
   AError := '';
   Dest := '';
   try
-    Name := 'Data_' + FormatDateTime('yyyymmdd_hhnnss', Now);
+    BaseName := 'Data_' + FormatDateTime('yyyymmdd_hhnnss', Now);
+    Name := BaseName;
+    Suffix := 1;
+    while DirectoryExists(FPaths.BackupDir + Name) do
+    begin
+      Name := BaseName + '_' + IntToStr(Suffix);
+      Inc(Suffix);
+    end;
     Dest := FPaths.BackupDir + Name + PathDelim;
     DestData := Dest + 'Data' + PathDelim;
     ForceDirectories(DestData);
-    if not CopyDataFiles(FPaths.DataDir, DestData, Copied, CopyErr) then
+    if not CopyBackupFiles(FPaths.DataDir, DestData, True, Copied, CopyErr) or
+      (Copied = 0) then
     begin
       AError := 'Не удалось скопировать каталог Data.';
       if CopyErr <> '' then
@@ -2921,21 +3070,51 @@ begin
         DeleteDirectory(Dest, False);
       Exit;
     end;
+    ForceDirectories(Dest + 'Covers');
+    if not CopyBackupFiles(FPaths.CoversDir, Dest + 'Covers', True,
+      CoverCopied, CopyErr) then
+    begin
+      AError := 'Не удалось скопировать каталог Covers.' + LineEnding + CopyErr;
+      DeleteDirectory(Dest, False);
+      Exit;
+    end;
+    Root := FPaths.Root;
+    if not CopyRequiredBackupFile(Root + 'Library.exe', Dest + 'Library.exe',
+      'Library.exe', AError) or
+      not CopyRequiredBackupFile(Root + 'LibraryUpdater.exe',
+      Dest + 'LibraryUpdater.exe', 'LibraryUpdater.exe', AError) or
+      not CopyRequiredBackupFile(Root + 'INSTALL.md', Dest + 'INSTALL.md',
+      'INSTALL.md', AError) then
+    begin
+      DeleteDirectory(Dest, False);
+      Exit;
+    end;
+    if not CopyOptionalBackupFile(FPaths.GridLayoutFile,
+      Dest + 'GridLayout.cfg', 'GridLayout.cfg', AError) or
+      not CopyOptionalBackupFile(FPaths.UserLayoutFile,
+      Dest + 'UserLayout.cfg', 'UserLayout.cfg', AError) then
+    begin
+      DeleteDirectory(Dest, False);
+      Exit;
+    end;
     SL := TStringList.Create;
     try
+      SL.Add('ПОЛНОЕ АВАРИЙНОЕ ВОССТАНОВЛЕНИЕ');
+      SL.Add('');
+      SL.Add('1. Закройте программу «Библиотека».');
+      SL.Add('2. Скопируйте Data, Covers, Library.exe, LibraryUpdater.exe, INSTALL.md и файлы *.cfg из этой копии в рабочую папку программы.');
+      SL.Add('3. Подтвердите замену Library.exe, LibraryUpdater.exe, Data, Covers и файлов раскладки.');
+      SL.Add('4. Не копируйте manifest.txt и RESTORE.txt в рабочую папку.');
+      SL.Add('5. Запустите Library.exe.');
+      SL.SaveToFile(Dest + 'RESTORE.txt');
+      SL.Clear;
+      SL.Add('BackupFormatVersion=2');
       SL.Add('BackupTime=' + FormatDateTimeRu(Now));
       SL.Add('AppVersion=' + APP_VERSION);
       SL.Add('FormatVersion=' + IntToStr(FORMAT_VERSION));
-      SL.Add('FilesCopied=' + IntToStr(Copied));
-      if FindFirst(DestData + '*.*', faAnyFile, SR) = 0 then
-      try
-        repeat
-          if (SR.Attr and faDirectory) = 0 then
-            SL.Add('File=' + SR.Name + ';Size=' + IntToStr(SR.Size));
-        until FindNext(SR) <> 0;
-      finally
-        FindClose(SR);
-      end;
+      SL.Add('DataFilesCopied=' + IntToStr(Copied));
+      SL.Add('CoverFilesCopied=' + IntToStr(CoverCopied));
+      AddManifestFiles(Dest, Dest, SL);
       Manifest := Dest + 'manifest.txt';
       SL.SaveToFile(Manifest);
     finally
@@ -2959,13 +3138,16 @@ end;
 
 function TLibraryDB.RestoreBackup(const ABackupDir: string; out AError: string): Boolean;
 var
-  Safety, SrcData: string;
+  Safety, SrcData, SrcCovers, Root: string;
   PathDummy: string;
-  Copied: Integer;
+  Copied, CoverCopied: Integer;
   CopyErr: string;
 begin
   Result := False;
   AError := '';
+  Root := IncludeTrailingPathDelimiter(ABackupDir);
+  if not IsFullBackup(Root, AError) then
+    Exit;
   SrcData := IncludeTrailingPathDelimiter(ABackupDir) + 'Data';
   if not DirectoryExists(SrcData) then
   begin
@@ -2974,20 +3156,59 @@ begin
   end;
   FRestoring := True;
   try
-    if not CreateBackup(PathDummy, AError) then
-    begin
-      AError := 'Не удалось создать страховочную копию перед восстановлением: ' + AError;
-      Exit;
-    end;
-    Safety := FPaths.DataDir;
-    if not CopyDataFiles(SrcData, Safety, Copied, CopyErr) then
-    begin
-      AError := 'Не удалось восстановить файлы данных.';
-      if CopyErr <> '' then
-        AError := AError + LineEnding + CopyErr;
-      Exit;
-    end;
-    FBooks.Clear;
+    try
+      if not CreateBackup(PathDummy, AError) then
+      begin
+        AError := 'Не удалось создать страховочную копию перед восстановлением: ' + AError;
+        Exit;
+      end;
+      Safety := FPaths.DataDir;
+      if not ClearRestoreDirectory(Safety, True, CopyErr) then
+      begin
+        AError := 'Не удалось подготовить Data к восстановлению.' +
+          LineEnding + CopyErr;
+        Exit;
+      end;
+      if not CopyBackupFiles(SrcData, Safety, True, Copied, CopyErr) or
+        (Copied = 0) then
+      begin
+        AError := 'Не удалось восстановить файлы данных.';
+        if CopyErr <> '' then
+          AError := AError + LineEnding + CopyErr;
+        Exit;
+      end;
+      SrcCovers := Root + 'Covers';
+      if not ClearRestoreDirectory(FPaths.CoversDir, False, CopyErr) then
+      begin
+        AError := 'Не удалось подготовить Covers к восстановлению.' +
+          LineEnding + CopyErr;
+        Exit;
+      end;
+      if not CopyBackupFiles(SrcCovers, FPaths.CoversDir, True, CoverCopied,
+        CopyErr) then
+      begin
+        AError := 'Не удалось восстановить обложки.' + LineEnding + CopyErr;
+        Exit;
+      end;
+      if FileExists(Root + 'GridLayout.cfg') then
+      begin
+        if not CopyFile(Root + 'GridLayout.cfg', FPaths.GridLayoutFile,
+          [cffOverwriteFile, cffPreserveTime]) then
+          raise Exception.Create('Не удалось восстановить GridLayout.cfg.');
+      end
+      else if FileExists(FPaths.GridLayoutFile) and
+        not DeleteFile(FPaths.GridLayoutFile) then
+        raise Exception.Create('Не удалось удалить GridLayout.cfg.');
+      if FileExists(Root + 'UserLayout.cfg') then
+      begin
+        if not CopyFile(Root + 'UserLayout.cfg', FPaths.UserLayoutFile,
+          [cffOverwriteFile, cffPreserveTime]) then
+          raise Exception.Create('Не удалось восстановить UserLayout.cfg.');
+      end
+      else if FileExists(FPaths.UserLayoutFile) and
+        not DeleteFile(FPaths.UserLayoutFile) then
+        raise Exception.Create('Не удалось удалить UserLayout.cfg.');
+      FBooks.Clear;
     FCopies.Clear;
     FReaders.Clear;
     FLoans.Clear;
@@ -3004,15 +3225,17 @@ begin
     LoadTable(FPaths.DataFile('Settings.dat'), @LoadSettingsStream);
     LoadOrRebuildIndexes;
     AppendAction(atRestoreBackup, okBackup, 0, 'Восстановление из копии: ' + ABackupDir, '', '');
-    Result := True;
-  except
-    on E: Exception do
-    begin
-      AError := 'Ошибка восстановления: ' + E.Message;
-      FLog.Write(AError);
+      Result := True;
+    except
+      on E: Exception do
+      begin
+        AError := 'Ошибка восстановления: ' + E.Message;
+        FLog.Write(AError);
+      end;
     end;
+  finally
+    FRestoring := False;
   end;
-  FRestoring := False;
 end;
 
 function TLibraryDB.MaybeAutoBackup(out APath, AError: string): Boolean;
