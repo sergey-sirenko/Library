@@ -4,7 +4,7 @@ program RecognitionTests;
 
 uses
   Classes, SysUtils, Contnrs, FileUtil, LConvEncoding, uEntities, uDatabase,
-  uOpenRouter, uTypes;
+  uOpenRouter, uReports, uTypes;
 
 var
   Failures: Integer = 0;
@@ -669,7 +669,19 @@ begin
       Results.Clear;
       DB.SearchBooks('', '802', Results, True);
       Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
-        'с флажком удалённая книга находится по инвентарному номеру');
+        'с флажком удалённая книга находится по полному инвентарному номеру');
+      Results.Clear;
+      DB.SearchBooks('', '80', Results, True);
+      Check(Results.Count = 0,
+        'часть инвентарного номера не находит книгу');
+      Results.Clear;
+      DB.SearchBooks('', '0802', Results, True);
+      Check(Results.Count = 0,
+        'ведущий ноль не совпадает с инвентарным номером');
+      Results.Clear;
+      DB.SearchBooks('', '8021', Results, True);
+      Check(Results.Count = 0,
+        'лишние цифры не совпадают с инвентарным номером');
       Results.Clear;
       DB.SearchBooks('', '801', Results, False);
       Check(Results.Count = 0,
@@ -686,6 +698,77 @@ begin
       Results.Free;
     end;
   finally
+    DB.Free;
+    DeleteDirectory(RootDir, False);
+  end;
+end;
+
+procedure TestFreeInventoryNumbers;
+var
+  RootDir, Err: string;
+  DB: TLibraryDB;
+  Location: TLocation;
+  Book: TBook;
+  CopyTwo, CopyFour, CopySix, CopyText: TCopy;
+  Reports: TReportService;
+  Lines: TStringList;
+begin
+  RootDir := IncludeTrailingPathDelimiter(GetTempDir(False)) +
+    'LibraryFreeInventory-' + IntToStr(GetTickCount64);
+  ForceDirectories(RootDir);
+  DB := TLibraryDB.Create(RootDir);
+  Reports := nil;
+  Lines := nil;
+  try
+    Check(DB.Open(Err), 'база свободных номеров открывается: ' + Err);
+    Check(DB.Login('admin', 'admin', Err), 'вход в базу свободных номеров: ' + Err);
+    Reports := TReportService.Create(DB);
+    Lines := Reports.FreeInventoryNumbers;
+    Check((Lines.Count = 1) and (Lines[0] = 'Номер'),
+      'без экземпляров свободные номера не перечисляются');
+    Lines.Free;
+    Lines := nil;
+
+    Location := DB.AddLocation('Основной фонд', '', Err);
+    Book := DB.AddBook('Книга для свободных номеров', '', 0, '', '', 0, '', '', Err);
+    Check((Location <> nil) and (Book <> nil),
+      'создаются книга и место для свободных номеров: ' + Err);
+    if (Location = nil) or (Book = nil) then
+      Exit;
+    CopyTwo := DB.AddCopy(Book.ID, '2', DEFAULT_COPY_CONDITION,
+      Location.ID, '', Date, Err);
+    CopyFour := DB.AddCopy(Book.ID, '4', DEFAULT_COPY_CONDITION,
+      Location.ID, '', Date, Err);
+    CopySix := DB.AddCopy(Book.ID, '06', DEFAULT_COPY_CONDITION,
+      Location.ID, '', Date, Err);
+    CopyText := DB.AddCopy(Book.ID, 'Б-1', DEFAULT_COPY_CONDITION,
+      Location.ID, '', Date, Err);
+    Check((CopyTwo <> nil) and (CopyFour <> nil) and (CopySix <> nil) and
+      (CopyText <> nil), 'создаются экземпляры для свободных номеров: ' + Err);
+    if (CopyTwo = nil) or (CopyFour = nil) or (CopySix = nil) or
+      (CopyText = nil) then
+      Exit;
+    Check(DB.DeleteCopy(CopyFour, Err),
+      'удаляется экземпляр внутри диапазона: ' + Err);
+    Lines := Reports.FreeInventoryNumbers;
+    Check(Lines.Count = 4, 'в диапазоне до наибольшего номера три пропуска');
+    if Lines.Count >= 1 then
+      CheckEqual('Номер', Lines[0], 'заголовок свободных инвентарных номеров');
+    if Lines.Count >= 2 then
+      CheckEqual('1', Lines[1], 'пропуск перед первым занятым номером');
+    if Lines.Count >= 3 then
+      CheckEqual('3', Lines[2], 'пропуск между занятыми номерами');
+    if Lines.Count >= 4 then
+      CheckEqual('5', Lines[3], 'пропуск перед наибольшим номером');
+    Check(Lines.IndexOf('4') < 0,
+      'номер удалённого экземпляра не считается свободным');
+    Check(Lines.IndexOf('6') < 0,
+      'наибольший номер не показывается как свободный');
+    Check(Lines.IndexOf('7') < 0,
+      'номера после наибольшего не показываются');
+  finally
+    Lines.Free;
+    Reports.Free;
     DB.Free;
     DeleteDirectory(RootDir, False);
   end;
@@ -848,6 +931,7 @@ begin
   TestDatabaseImport;
   TestInitialBookCopy;
   TestBookSearchDeletedRecords;
+  TestFreeInventoryNumbers;
   TestInventoryNumberSuggestionIncludesDeleted;
   TestCoverStorage;
   if Failures <> 0 then

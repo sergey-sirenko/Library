@@ -17,6 +17,7 @@ type
     function BooksCatalog: TStringList;
     function CopiesByStatus: TStringList;
     function AvailableCopies: TStringList;
+    function FreeInventoryNumbers: TStringList;
     function BooksOnHands: TStringList;
     function OverdueLoans: TStringList;
     function LoansHistory(AFrom, ATo: TDateTime): TStringList;
@@ -140,6 +141,61 @@ begin
     end;
   finally
     List.Free;
+  end;
+end;
+
+function TReportService.FreeInventoryNumbers: TStringList;
+{ Пропущенные целые номера от 1 до наибольшего уже заведённого.
+  Логически удалённый экземпляр номер занимает. Нечисловые номера,
+  например «Б-1», в диапазон не входят. }
+var
+  I, J, Count: Integer;
+  C: TCopy;
+  Value, Expected, Tmp: Int64;
+  Used: array of Int64;
+begin
+  Result := TStringList.Create;
+  Result.Add('Номер');
+  Count := 0;
+  if FDB.Copies.Count > 0 then
+  begin
+    SetLength(Used, FDB.Copies.Count);
+    for I := 0 to FDB.Copies.Count - 1 do
+    begin
+      C := TCopy(FDB.Copies[I]);
+      if TryStrToInt64(Trim(C.InventoryNo), Value) and (Value >= 1) then
+      begin
+        Used[Count] := Value;
+        Inc(Count);
+      end;
+    end;
+  end;
+  if Count = 0 then
+    Exit;
+  SetLength(Used, Count);
+  for I := 1 to Count - 1 do
+  begin
+    Tmp := Used[I];
+    J := I - 1;
+    while (J >= 0) and (Used[J] > Tmp) do
+    begin
+      Used[J + 1] := Used[J];
+      Dec(J);
+    end;
+    Used[J + 1] := Tmp;
+  end;
+  Expected := 1;
+  for I := 0 to Count - 1 do
+  begin
+    Value := Used[I];
+    if Value < Expected then
+      Continue;
+    while Expected < Value do
+    begin
+      Result.Add(IntToStr(Expected));
+      Inc(Expected);
+    end;
+    Inc(Expected);
   end;
 end;
 

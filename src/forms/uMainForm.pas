@@ -823,7 +823,7 @@ begin
       SaveOne(gridBooks, 'Books');
       SaveOne(gridCopies, 'Copies');
       SaveOne(gridReaders, 'Readers');
-      SaveOne(gridLoans, 'Loans');
+      SaveOne(gridLoans, 'LoansCategory');
       SaveOne(gridOverdue, 'Overdue');
       SaveOne(gridCategories, 'Categories');
       SaveOne(gridLocations, 'Locations');
@@ -943,7 +943,7 @@ begin
       LoadOne(gridBooks, 'Books');
       LoadOne(gridCopies, 'Copies');
       LoadOne(gridReaders, 'Readers');
-      LoadOne(gridLoans, 'Loans');
+      LoadOne(gridLoans, 'LoansCategory');
       LoadOne(gridOverdue, 'Overdue');
       LoadOne(gridCategories, 'Categories');
       LoadOne(gridLocations, 'Locations');
@@ -1192,7 +1192,7 @@ begin
     OpenLoanCopy(SelectedLoan)
   else if gridLoans.Col = DATA_FIRST_COL + 1 then
     OpenLoanBook(SelectedLoan)
-  else if gridLoans.Col = DATA_FIRST_COL + 2 then
+  else if gridLoans.Col = DATA_FIRST_COL + 3 then
     OpenLoanReader(SelectedLoan)
   else if (gridLoans.Col = FLoanIssuedCol) or (gridLoans.Col = FLoanDueCol) then
     EditSelectedLoanDate(gridLoans.Col);
@@ -1256,7 +1256,7 @@ begin
   SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
   gridBooks.OnDblClick := @btnBookEditClick;
   edtBookSearch.Hint := 'Поиск по названию, автору или ISBN';
-  edtBookSearchInv.Hint := 'Поиск по инвентарному номеру экземпляра';
+  edtBookSearchInv.Hint := 'Поиск по полному инвентарному номеру экземпляра';
   edtBookSearch.Placeholder := 'Название, автор или ISBN';
   edtBookSearchInv.Placeholder := 'По инв. №';
   edtBookSearchInv.OnKeyPress := @edtBookSearchInvKeyPress;
@@ -1266,9 +1266,9 @@ begin
   splBooksCopies.OnMoved := @splBooksCopiesMoved;
   SetupGrid(gridReaders, ['ФИО', 'Телефон', 'Статус', 'Регистрация', 'Удалён']);
   gridReaders.OnDblClick := @btnReaderEditClick;
-  SetupGrid(gridLoans, ['Инв. №', 'Книга', 'Читатель', 'Выдана', 'Срок', 'Состояние']);
-  FLoanIssuedCol := DATA_FIRST_COL + 3;
-  FLoanDueCol := DATA_FIRST_COL + 4;
+  SetupGrid(gridLoans, ['Инв. №', 'Книга', 'Категория', 'Читатель', 'Выдана', 'Срок', 'Состояние']);
+  FLoanIssuedCol := DATA_FIRST_COL + 4;
+  FLoanDueCol := DATA_FIRST_COL + 5;
   SetupLoansGridEditing;
   SetupGrid(gridOverdue, ['Инв. №', 'Книга', 'Читатель', 'Срок', 'Дней']);
   gridOverdue.OnDblClick := @gridOverdueDblClick;
@@ -1296,6 +1296,7 @@ begin
   cbReport.Items.Add('Каталог книг');
   cbReport.Items.Add('Экземпляры');
   cbReport.Items.Add('Свободные экземпляры');
+  cbReport.Items.Add('Свободные инв.№');
   cbReport.Items.Add('Книги на руках');
   cbReport.Items.Add('Просроченные выдачи');
   cbReport.Items.Add('История выдач');
@@ -1662,6 +1663,8 @@ var
   C: TCopy;
   R: TReader;
   B: TBook;
+  Cat: TCategory;
+  CatName: string;
   KeepID: TId;
 begin
   KeepID := 0;
@@ -1679,13 +1682,22 @@ begin
     C := FDB.FindCopy(L.CopyID);
     R := FDB.FindReader(L.ReaderID);
     B := nil;
-    if C <> nil then B := FDB.FindBook(C.BookID);
+    CatName := '';
+    if C <> nil then
+      B := FDB.FindBook(C.BookID);
+    if B <> nil then
+    begin
+      Cat := FDB.FindCategory(B.CategoryID);
+      if Cat <> nil then
+        CatName := Cat.Name;
+    end;
     gridLoans.Cells[DATA_FIRST_COL, Row] := IfThen(C <> nil, C.InventoryNo, '');
     gridLoans.Cells[DATA_FIRST_COL + 1, Row] := IfThen(B <> nil, B.Title, '');
-    gridLoans.Cells[DATA_FIRST_COL + 2, Row] := IfThen(R <> nil, R.FullName, '');
-    gridLoans.Cells[DATA_FIRST_COL + 3, Row] := FormatDateRu(L.IssuedAt);
-    gridLoans.Cells[DATA_FIRST_COL + 4, Row] := FormatDateRu(L.DueAt);
-    gridLoans.Cells[DATA_FIRST_COL + 5, Row] := LoanStateToStr(L.State);
+    gridLoans.Cells[DATA_FIRST_COL + 2, Row] := CatName;
+    gridLoans.Cells[DATA_FIRST_COL + 3, Row] := IfThen(R <> nil, R.FullName, '');
+    gridLoans.Cells[DATA_FIRST_COL + 4, Row] := FormatDateRu(L.IssuedAt);
+    gridLoans.Cells[DATA_FIRST_COL + 5, Row] := FormatDateRu(L.DueAt);
+    gridLoans.Cells[DATA_FIRST_COL + 6, Row] := LoanStateToStr(L.State);
     gridLoans.Objects[0, Row] := L;
     Inc(Row);
   end;
@@ -2839,11 +2851,12 @@ begin
     0: SL := FReports.BooksCatalog;
     1: SL := FReports.CopiesByStatus;
     2: SL := FReports.AvailableCopies;
-    3: SL := FReports.BooksOnHands;
-    4: SL := FReports.OverdueLoans;
-    5: SL := FReports.LoansHistory(0, 0);
-    6: SL := FReports.ReadersList;
-    7: SL := FReports.ActionsLog(0, 0);
+    3: SL := FReports.FreeInventoryNumbers;
+    4: SL := FReports.BooksOnHands;
+    5: SL := FReports.OverdueLoans;
+    6: SL := FReports.LoansHistory(0, 0);
+    7: SL := FReports.ReadersList;
+    8: SL := FReports.ActionsLog(0, 0);
   end;
   if SL <> nil then
   try

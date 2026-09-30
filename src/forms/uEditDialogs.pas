@@ -297,6 +297,7 @@ type
     eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover, eInv: TEdit;
     btnFillISBN: TButton;
     cbCat, cbLoc: TComboBox;
+    lblCat: TLabel;
     FieldsPanel, CoverPanel: TPanel;
     CoverPreview: TImage;
     CoverPlaceholder: TLabel;
@@ -312,6 +313,9 @@ type
     function SelectISBNBook(const Items: TBookCandidates): Integer;
     procedure ISBNKeyPress(Sender: TObject; var Key: Char);
     procedure ISBNChange(Sender: TObject);
+    procedure CategoryChange(Sender: TObject);
+    procedure MarkCategoryRequired;
+    procedure ClearCategoryHighlight;
     procedure OKClick(Sender: TObject);
   end;
 
@@ -612,6 +616,36 @@ begin
   eISBN.SelLength := EndPos - StartPos;
 end;
 
+function BookCategorySelected(ACombo: TComboBox): Boolean;
+begin
+  Result := (ACombo <> nil) and (ACombo.ItemIndex >= 0) and
+    (ACombo.ItemIndex < ACombo.Items.Count) and
+    (ACombo.Items.Objects[ACombo.ItemIndex] <> nil) and
+    (Trim(ACombo.Text) <> '');
+end;
+
+procedure TBookDlgHelper.MarkCategoryRequired;
+begin
+  if lblCat <> nil then
+    lblCat.Font.Color := clRed;
+  if cbCat <> nil then
+    cbCat.Color := TColor($00C8D0FF);
+end;
+
+procedure TBookDlgHelper.ClearCategoryHighlight;
+begin
+  if lblCat <> nil then
+    lblCat.Font.Color := clWindowText;
+  if cbCat <> nil then
+    cbCat.Color := clWindow;
+end;
+
+procedure TBookDlgHelper.CategoryChange(Sender: TObject);
+begin
+  if BookCategorySelected(cbCat) then
+    ClearCategoryHighlight;
+end;
+
 procedure TBookDlgHelper.ISBNKeyPress(Sender: TObject; var Key: Char);
 begin
   if Key <> #13 then
@@ -638,6 +672,14 @@ begin
   if Trim(eTitle.Text) = '' then
   begin
     MessageDlg('Укажите название книги.', mtError, [mbOK], 0);
+    Exit;
+  end;
+  if not BookCategorySelected(cbCat) then
+  begin
+    MarkCategoryRequired;
+    MessageDlg('Укажите категорию.', mtError, [mbOK], 0);
+    if (cbCat <> nil) and cbCat.CanFocus then
+      cbCat.SetFocus;
     Exit;
   end;
   Year := StrToIntDef(Trim(eYear.Text), 0);
@@ -940,7 +982,7 @@ begin
     InputPanel(FieldsPanel, 'Год', Y, FW, eYear);
     InputPanel(FieldsPanel, 'Издательство', Y, FW, ePublisher);
     InputPanel(FieldsPanel, 'Описание', Y, FW, eDesc);
-    InputCombo(FieldsPanel, 'Категория', Y, FW, cbCat);
+    Helper.lblCat := InputCombo(FieldsPanel, 'Категория *', Y, FW, cbCat);
     cbCat.Items.AddObject('(нет)', nil);
     // Активные категории — отсортировать по наименованию (без учёта регистра)
     CatsSL := TStringList.Create;
@@ -974,6 +1016,7 @@ begin
     Helper.eCover := eCover;
     Helper.cbCat := cbCat;
     Helper.cbLoc := cbLoc;
+    cbCat.OnChange := @Helper.CategoryChange;
     Helper.FieldsPanel := FieldsPanel;
     Helper.CoverPanel := CoverPanel;
     Helper.CoverPreview := CoverPreview;

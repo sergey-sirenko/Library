@@ -3253,7 +3253,7 @@ end;
 procedure TLibraryDB.SearchBooks(const ATitleQuery: string;
   const AInventoryQuery: string; AOut: TList; AIncludeDeleted: Boolean);
 var
-  TitleQ, ISBNQ, InvQ, InvQLow: string;
+  TitleQ, ISBNQ, InvQ: string;
   IDs, CopyIDs: TList;
   I: Integer;
   B: TBook;
@@ -3303,19 +3303,20 @@ begin
         end;
     end;
 
-    { 2) поиск по инвентарному номеру экземпляра.
-       FCopiesIdx содержит и InventoryNo, и IntToStr(BookID), поэтому
-       FindContains может вернуть копию, у которой BookID содержит подстроку,
-       но инв.№ — нет. Делаем явную проверку по InventoryNo. }
+    { 2) поиск по инвентарному номеру экземпляра — только весь номер.
+       Часть номера совпадением не считается. Регистр не учитывается,
+       внутренние пробелы сохраняются. FCopiesIdx содержит и InventoryNo,
+       и IntToStr(BookID), поэтому точное попадание в индекс ещё
+       проверяется по самому инвентарному номеру. }
     if InvQ <> '' then
     begin
-      InvQLow := LowerCase(InvQ);
-      FCopiesIdx.FindContains(InvQ, CopyIDs);
+      FCopiesIdx.FindExactIDs(InvQ, CopyIDs);
       for I := 0 to CopyIDs.Count - 1 do
       begin
         C := FindCopy(TId(CopyIDs[I]));
         if (C = nil) or C.Deleted then Continue;
-        if Pos(InvQLow, LowerCase(C.InventoryNo)) = 0 then Continue;
+        if UnicodeLowerCase(UnicodeString(Trim(C.InventoryNo))) <>
+          UnicodeLowerCase(UnicodeString(InvQ)) then Continue;
         B := FindBook(C.BookID);
         if B = nil then Continue;
         if B.Deleted and (not AIncludeDeleted) then Continue;
@@ -3326,7 +3327,8 @@ begin
         begin
           C := TCopy(FCopies[I]);
           if not C.Deleted then Continue;
-          if Pos(InvQLow, LowerCase(C.InventoryNo)) = 0 then Continue;
+          if UnicodeLowerCase(UnicodeString(Trim(C.InventoryNo))) <>
+            UnicodeLowerCase(UnicodeString(InvQ)) then Continue;
           B := FindBook(C.BookID);
           if B = nil then Continue;
           if AOut.IndexOf(B) < 0 then AOut.Add(B);

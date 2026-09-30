@@ -59,7 +59,7 @@ var
 begin
   S := PlainCaption(ACaption);
   if (S = 'Год') or (S = 'Дней') or (S = 'Дней просрочки') or
-    (S = 'Вход $ / 1M') or (S = 'Выход $ / 1M') then
+    (S = 'Номер') or (S = 'Вход $ / 1M') or (S = 'Выход $ / 1M') then
     Exit(gskNumber);
   if (Pos('Дата', S) = 1) or (S = 'Регистрация') or (S = 'Выдана') or
     (S = 'Срок') or (S = 'Срок возврата') or (S = 'Возврат') then
