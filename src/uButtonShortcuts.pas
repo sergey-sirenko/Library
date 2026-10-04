@@ -9,7 +9,7 @@ uses
 
 type
   TButtonShortcut = (bsAdd, bsEdit, bsDelete, bsFind, bsSave, bsCancel,
-    bsFill, bsGenerate);
+    bsFill, bsGenerate, bsCopy);
 
   TButtonShortcuts = class(TComponent)
   private
@@ -48,9 +48,9 @@ type
 
 const
   SHORTCUT_LABELS: array[TButtonShortcut] of string =
-    ('Ins', 'F2', 'Del', 'F3', 'Ctrl+Enter', 'Esc', 'F4', 'Ctrl+Enter');
+    ('Ins', 'F2', 'Del', 'F3', 'Ctrl+Enter', 'Esc', 'F4', 'Ctrl+Enter', 'F9');
   SHORTCUT_KEYS: array[TButtonShortcut] of Word =
-    (VK_INSERT, VK_F2, VK_DELETE, VK_F3, VK_RETURN, VK_ESCAPE, VK_F4, VK_RETURN);
+    (VK_INSERT, VK_F2, VK_DELETE, VK_F3, VK_RETURN, VK_ESCAPE, VK_F4, VK_RETURN, VK_F9);
 
 function WithinControl(AControl, ARoot: TControl): Boolean;
 begin

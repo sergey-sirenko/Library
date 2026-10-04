@@ -44,6 +44,13 @@ begin
   Check(GridSortKind('Инв. №') = gskText, 'Тип инвентарного номера');
   Check(GridSortKind('Инв.№') = gskText, 'Тип инвентарного номера в отчёте');
   Check(GridSortKind('Номер') = gskNumber, 'Тип свободного инвентарного номера');
+  Check(GridSortKind('Свободные номера') = gskInventoryRange, 'Тип диапазона номеров');
+  Check(CompareGridValues('2-9', '10-50', gskInventoryRange) < 0,
+    'Диапазоны сортируются по числовому началу');
+  Check(CompareGridValues('507', '510-550', gskInventoryRange) < 0,
+    'Одиночный номер сортируется вместе с диапазонами');
+  Check(CompareGridValues('9007199254740992', '9007199254740993-9007199254740994',
+    gskInventoryRange) < 0, 'Большие номера сравниваются без потери точности');
   Check(GridSortKind('Дата регистрации') = gskDate, 'Тип даты отчёта');
   Check(GridSortKind('Дней просрочки') = gskNumber, 'Тип числа отчёта');
 end;

@@ -48,6 +48,7 @@ type
     btnBookSearchClear: TSpeedButton;
     btnBookSearch: TBitBtn;
     btnBookAdd: TBitBtn;
+    btnBookCopy: TBitBtn;
     btnBookRecognize: TBitBtn;
     pmBookRecognize: TPopupMenu;
     miBookRecognizeImage: TMenuItem;
@@ -147,6 +148,7 @@ type
     procedure edtBookSearchInvChange(Sender: TObject);
     procedure edtBookSearchInvKeyPress(Sender: TObject; var Key: char);
     procedure btnBookAddClick(Sender: TObject);
+    procedure btnBookCopyClick(Sender: TObject);
     procedure btnBookRecognizeMenuClick(Sender: TObject);
     procedure btnBookRecognizeClick(Sender: TObject);
     procedure btnBookRecognizeTextClick(Sender: TObject);
@@ -257,6 +259,7 @@ type
     procedure SetupUIIcons;
     procedure ApplyButtonIcon(AButton: TBitBtn; AIndex: Integer);
     procedure GridSorted(Sender: TObject);
+    procedure UpdateReportRowNumbers;
     procedure GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: Integer);
     procedure GridPrepareCanvas(Sender: TObject; aCol, aRow: Integer;
       aState: TGridDrawState);
@@ -288,6 +291,7 @@ const
   MIN_BOOK_COPY_PANEL_HEIGHT = 120;
   ACTIVE_MARKER_COL = 0;
   DATA_FIRST_COL = 1;
+  REPORT_FIRST_DATA_COL = DATA_FIRST_COL + 1;
   ACTIVE_MARKER_WIDTH = 24;
   ACTIVE_MARKER = '▶';
   { RGB(139,69,19) — коричневый для подписи активной закладки }
@@ -747,8 +751,20 @@ end;
 
 procedure TMainForm.GridSorted(Sender: TObject);
 begin
+  if Sender = gridReport then
+    UpdateReportRowNumbers;
   RecalcGridRowHeights(Sender as TStringGrid);
   UpdateGridActiveMarker(Sender as TStringGrid);
+end;
+
+procedure TMainForm.UpdateReportRowNumbers;
+var
+  R: Integer;
+begin
+  for R := gridReport.FixedRows to gridReport.RowCount - 1 do
+    if GridRowHasData(gridReport, R) then
+      gridReport.Cells[DATA_FIRST_COL, R] :=
+        IntToStr(R - gridReport.FixedRows + 1);
 end;
 
 procedure TMainForm.GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: Integer);
@@ -1232,6 +1248,7 @@ begin
     RecreateWnd(pcMain);
   SetupUIIcons;
   BindButtonShortcut(btnBookAdd, bsAdd);
+  BindButtonShortcut(btnBookCopy, bsCopy);
   BindButtonShortcut(btnBookEdit, bsEdit);
   BindButtonShortcut(btnBookDelete, bsDelete);
   BindButtonShortcut(btnReaderAdd, bsAdd);
@@ -1279,7 +1296,7 @@ begin
   gridCategories.OnDblClick := @btnCatEditClick;
   SetupGrid(gridLocations, ['Наименование', 'Описание', 'Удалён']);
   gridLocations.OnDblClick := @btnLocEditClick;
-  SetupGrid(gridReport, ['']);
+  SetupGrid(gridReport, ['№ п/п', '']);
   TGridSorting.CreateFor(gridBooks, DATA_FIRST_COL, @GridSorted);
   TGridSorting.CreateFor(gridCopies, DATA_FIRST_COL, @GridSorted);
   TGridSorting.CreateFor(gridReaders, DATA_FIRST_COL, @GridSorted);
@@ -1289,7 +1306,7 @@ begin
   TGridSorting.CreateFor(gridJournal, DATA_FIRST_COL, @GridSorted);
   TGridSorting.CreateFor(gridCategories, DATA_FIRST_COL, @GridSorted);
   TGridSorting.CreateFor(gridLocations, DATA_FIRST_COL, @GridSorted);
-  TGridSorting.CreateFor(gridReport, DATA_FIRST_COL, @GridSorted);
+  TGridSorting.CreateFor(gridReport, REPORT_FIRST_DATA_COL, @GridSorted);
   UpdateDeletedColumnVisibility;
   FReportLines := TStringList.Create;
   cbReport.Items.Clear;
@@ -1353,6 +1370,7 @@ begin
 
   ApplyButtonIcon(btnBookSearch, icoSearch);
   ApplyButtonIcon(btnBookAdd, icoAdd);
+  ApplyButtonIcon(btnBookCopy, icoAdd);
   ApplyButtonIcon(btnBookRecognize, icoRun);
   ApplyButtonIcon(btnBookEdit, icoEdit);
   ApplyButtonIcon(btnBookDelete, icoDelete);
@@ -2320,6 +2338,24 @@ begin
   end;
 end;
 
+procedure TMainForm.btnBookCopyClick(Sender: TObject);
+var
+  B: TBook;
+  ID: TId;
+begin
+  B := SelectedBook;
+  if B = nil then
+  begin
+    MessageDlg('Выберите книгу.', mtInformation, [mbOK], 0);
+    Exit;
+  end;
+  if EditBookDialog(FDB, nil, ID, B) then
+  begin
+    RefreshAll;
+    SelectGridEntity(gridBooks, ID, True);
+  end;
+end;
+
 procedure TMainForm.btnBookRecognizeClick(Sender: TObject);
 var
   OpenDlg: TOpenDialog;
@@ -2806,7 +2842,12 @@ var
 begin
   if FReportLines = nil then
     FReportLines := TStringList.Create;
-  FReportLines.Assign(ALines);
+  FReportLines.Clear;
+  for R := 0 to ALines.Count - 1 do
+    if R = 0 then
+      FReportLines.Add('№ п/п;' + ALines[R])
+    else
+      FReportLines.Add(IntToStr(R) + ';' + ALines[R]);
 
   Parts := TStringList.Create;
   try
@@ -2814,24 +2855,26 @@ begin
     Parts.Delimiter := ';';
     Parts.QuoteChar := '"';
     MaxCols := 1;
-    for R := 0 to ALines.Count - 1 do
+    for R := 0 to FReportLines.Count - 1 do
     begin
-      Parts.DelimitedText := ALines[R];
+      Parts.DelimitedText := FReportLines[R];
       if Parts.Count > MaxCols then
         MaxCols := Parts.Count;
     end;
 
-    gridReport.FixedRows := Ord(ALines.Count > 0);
+    gridReport.FixedRows := Ord(FReportLines.Count > 0);
     gridReport.ColCount := MaxCols + DATA_FIRST_COL;
-    gridReport.RowCount := Max(1, ALines.Count);
+    gridReport.RowCount := Max(1, FReportLines.Count);
     gridReport.ColWidths[ACTIVE_MARKER_COL] := ACTIVE_MARKER_WIDTH;
+    gridReport.ColWidths[DATA_FIRST_COL] := Max(70,
+      gridReport.Canvas.TextWidth(IntToStr(Max(1, FReportLines.Count - 1))) + 24);
     for R := 0 to gridReport.RowCount - 1 do
       for C := 0 to gridReport.ColCount - 1 do
         gridReport.Cells[C, R] := '';
 
-    for R := 0 to ALines.Count - 1 do
+    for R := 0 to FReportLines.Count - 1 do
     begin
-      Parts.DelimitedText := ALines[R];
+      Parts.DelimitedText := FReportLines[R];
       for C := 0 to Parts.Count - 1 do
         gridReport.Cells[C + DATA_FIRST_COL, R] := Parts[C];
     end;

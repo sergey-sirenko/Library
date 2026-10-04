@@ -75,13 +75,13 @@ object MainForm: TMainForm
           TabOrder = 3
         end
         object btnBookRecognize: TBitBtn
-          Left = 942
+          Left = 1080
           Height = 28
           Top = 8
           Width = 150
           Caption = 'Распознать'
           OnClick = btnBookRecognizeMenuClick
-          TabOrder = 7
+          TabOrder = 8
         end
         object btnBookEdit: TBitBtn
           Left = 578
@@ -93,31 +93,40 @@ object MainForm: TMainForm
           TabOrder = 4
         end
         object btnBookDelete: TBitBtn
-          Left = 696
+          Left = 834
           Height = 28
           Top = 8
           Width = 100
           Caption = 'Удалить'
           OnClick = btnBookDeleteClick
-          TabOrder = 5
+          TabOrder = 6
         end
         object btnBookRestore: TBitBtn
-          Left = 804
+          Left = 942
           Height = 28
           Top = 8
           Width = 130
           Caption = 'Восстановить'
           OnClick = btnBookRestoreClick
-          TabOrder = 6
+          TabOrder = 7
+        end
+        object btnBookCopy: TBitBtn
+          Left = 696
+          Height = 28
+          Top = 8
+          Width = 130
+          Caption = 'Скопировать'
+          OnClick = btnBookCopyClick
+          TabOrder = 5
         end
         object chkShowDeleted: TCheckBox
-          Left = 1238
+          Left = 1376
           Height = 24
           Top = 10
           Width = 76
           Caption = 'Удалённые'
           OnChange = chkShowDeletedChange
-          TabOrder = 9
+          TabOrder = 10
         end
       end
       object gridBooks: TStringGrid

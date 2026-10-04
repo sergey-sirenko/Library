@@ -724,7 +724,7 @@ begin
     Check(DB.Login('admin', 'admin', Err), 'вход в базу свободных номеров: ' + Err);
     Reports := TReportService.Create(DB);
     Lines := Reports.FreeInventoryNumbers;
-    Check((Lines.Count = 1) and (Lines[0] = 'Номер'),
+    Check((Lines.Count = 1) and (Lines[0] = 'Свободные номера'),
       'без экземпляров свободные номера не перечисляются');
     Lines.Free;
     Lines := nil;
@@ -753,7 +753,7 @@ begin
     Lines := Reports.FreeInventoryNumbers;
     Check(Lines.Count = 4, 'в диапазоне до наибольшего номера три пропуска');
     if Lines.Count >= 1 then
-      CheckEqual('Номер', Lines[0], 'заголовок свободных инвентарных номеров');
+      CheckEqual('Свободные номера', Lines[0], 'заголовок свободных инвентарных номеров');
     if Lines.Count >= 2 then
       CheckEqual('1', Lines[1], 'пропуск перед первым занятым номером');
     if Lines.Count >= 3 then
@@ -766,6 +766,35 @@ begin
       'наибольший номер не показывается как свободный');
     Check(Lines.IndexOf('7') < 0,
       'номера после наибольшего не показываются');
+    Lines.Free;
+    Lines := nil;
+    CopyTwo.InventoryNo := '501';
+    CopyFour.InventoryNo := '509';
+    CopySix.InventoryNo := '551';
+    Lines := Reports.FreeInventoryNumbers;
+    Check(Lines.Count = 4, 'последовательные пропуски объединены в три диапазона');
+    if Lines.Count = 4 then
+    begin
+      CheckEqual('1-500', Lines[1], 'диапазон перед первым занятым номером');
+      CheckEqual('502-508', Lines[2], 'удалённый экземпляр разделяет диапазоны');
+      CheckEqual('510-550', Lines[3], 'диапазон перед последним занятым номером');
+    end;
+    Lines.Free;
+    Lines := nil;
+    CopyTwo.InventoryNo := '1';
+    CopyFour.InventoryNo := '01';
+    CopySix.InventoryNo := IntToStr(High(Int64));
+    Lines := Reports.FreeInventoryNumbers;
+    Check(Lines.Count = 2, 'дубликаты и большой пропуск не создают лишних строк');
+    if Lines.Count = 2 then
+      CheckEqual('2-' + IntToStr(High(Int64) - 1), Lines[1],
+        'диапазон до максимального Int64 без переполнения');
+    Lines.Free;
+    Lines := nil;
+    CopyFour.InventoryNo := '2';
+    CopySix.InventoryNo := '3';
+    Lines := Reports.FreeInventoryNumbers;
+    Check(Lines.Count = 1, 'при отсутствии пропусков остаётся только заголовок');
   finally
     Lines.Free;
     Reports.Free;

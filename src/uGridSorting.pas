@@ -8,7 +8,7 @@ uses
   Classes, SysUtils, Grids;
 
 type
-  TGridSortKind = (gskText, gskNumber, gskDate);
+  TGridSortKind = (gskText, gskNumber, gskDate, gskInventoryRange);
   TGridSortKeyEvent = function(ACol, ARow: Integer): string of object;
 
   { Состояние принадлежит таблице и живёт только до закрытия окна. }
@@ -58,6 +58,8 @@ var
   S: string;
 begin
   S := PlainCaption(ACaption);
+  if S = 'Свободные номера' then
+    Exit(gskInventoryRange);
   if (S = 'Год') or (S = 'Дней') or (S = 'Дней просрочки') or
     (S = 'Номер') or (S = 'Вход $ / 1M') or (S = 'Выход $ / 1M') then
     Exit(gskNumber);
@@ -74,6 +76,8 @@ var
   DA, DB: TDateTime;
   OKA, OKB: Boolean;
   FS: TFormatSettings;
+  RangeA, RangeB: Int64;
+  P: Integer;
 begin
   SA := Trim(A);
   SB := Trim(B);
@@ -89,6 +93,21 @@ begin
   VA := 0;
   VB := 0;
   case AKind of
+    gskInventoryRange:
+      begin
+        P := Pos('-', SA);
+        if P > 0 then SA := Copy(SA, 1, P - 1);
+        P := Pos('-', SB);
+        if P > 0 then SB := Copy(SB, 1, P - 1);
+        OKA := TryStrToInt64(SA, RangeA);
+        OKB := TryStrToInt64(SB, RangeB);
+        if OKA and OKB then
+        begin
+          if RangeA < RangeB then Exit(-1);
+          if RangeA > RangeB then Exit(1);
+          Exit(0);
+        end;
+      end;
     gskNumber:
       begin
         FS.DecimalSeparator := '.';

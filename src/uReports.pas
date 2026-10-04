@@ -155,7 +155,7 @@ var
   Used: array of Int64;
 begin
   Result := TStringList.Create;
-  Result.Add('Номер');
+  Result.Add('Свободные номера');
   Count := 0;
   if FDB.Copies.Count > 0 then
   begin
@@ -190,12 +190,16 @@ begin
     Value := Used[I];
     if Value < Expected then
       Continue;
-    while Expected < Value do
+    if Expected < Value then
     begin
-      Result.Add(IntToStr(Expected));
-      Inc(Expected);
+      if Expected = Value - 1 then
+        Result.Add(IntToStr(Expected))
+      else
+        Result.Add(IntToStr(Expected) + '-' + IntToStr(Value - 1));
     end;
-    Inc(Expected);
+    if Value = High(Int64) then
+      Break;
+    Expected := Value + 1;
   end;
 end;
 

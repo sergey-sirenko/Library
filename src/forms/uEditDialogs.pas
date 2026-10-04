@@ -8,7 +8,8 @@ uses
   Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
   Calendar, Grids, uTypes, uEntities, uDatabase, uUIFont;
 
-function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId): Boolean;
+function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId;
+  ATemplateBook: TBook = nil): Boolean;
 function EditCopyDialog(ADB: TLibraryDB; ACopy: TCopy; ABookID: TId; out AResultID: TId): Boolean;
 function EditReaderDialog(ADB: TLibraryDB; AReader: TReader; out AResultID: TId): Boolean;
 function EditCategoryDialog(ADB: TLibraryDB; ACat: TCategory; out AResultID: TId): Boolean;
@@ -621,7 +622,8 @@ begin
   Result := (ACombo <> nil) and (ACombo.ItemIndex >= 0) and
     (ACombo.ItemIndex < ACombo.Items.Count) and
     (ACombo.Items.Objects[ACombo.ItemIndex] <> nil) and
-    (Trim(ACombo.Text) <> '');
+    (Trim(ACombo.Text) <> '') and
+    (UTF8CompareText(ACombo.Text, ACombo.Items[ACombo.ItemIndex]) = 0);
 end;
 
 procedure TBookDlgHelper.MarkCategoryRequired;
@@ -895,7 +897,8 @@ begin
     MessageDlg(Err, mtError, [mbOK], 0);
 end;
 
-function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId): Boolean;
+function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId;
+  ATemplateBook: TBook): Boolean;
 var
   F: TForm;
   eTitle, eAuthors, eYear, ePublisher, eISBN, eDesc, eCover, eInv: TEdit;
@@ -910,9 +913,13 @@ var
   L: TLocation;
   LastLocationID: TId;
   CatsSL: TStringList;
+  SourceBook: TBook;
 begin
   Result := False;
   AResultID := 0;
+  SourceBook := ABook;
+  if SourceBook = nil then
+    SourceBook := ATemplateBook;
   F := TForm.Create(nil);
   Helper := TBookDlgHelper.Create;
   try
@@ -925,6 +932,8 @@ begin
     ApplyFormUIFont(F, ADB.Settings.UIFontSize);
     PrepareCardForm(F);
     F.Caption := 'Книга';
+    if (ABook = nil) and (ATemplateBook <> nil) then
+      F.Caption := 'Копирование книги';
     CoverWidth := 210;
     F.ClientWidth := 680;
     FieldsPanel := TPanel.Create(F);
@@ -983,6 +992,9 @@ begin
     InputPanel(FieldsPanel, 'Издательство', Y, FW, ePublisher);
     InputPanel(FieldsPanel, 'Описание', Y, FW, eDesc);
     Helper.lblCat := InputCombo(FieldsPanel, 'Категория *', Y, FW, cbCat);
+    cbCat.Style := csDropDown;
+    cbCat.AutoCompleteText := [cbactEnabled, cbactEndOfLineComplete,
+      cbactSearchAscending];
     cbCat.Items.AddObject('(нет)', nil);
     // Активные категории — отсортировать по наименованию (без учёта регистра)
     CatsSL := TStringList.Create;
@@ -1031,17 +1043,19 @@ begin
     F.OnResize := @Helper.FormResize;
     F.OnShow := @Helper.FormShow;
     LoadCardFormSize(ADB, F, 'Book');
-    if ABook <> nil then
+    if SourceBook <> nil then
     begin
-      eTitle.Text := ABook.Title;
-      eAuthors.Text := ABook.Authors;
-      eYear.Text := IntToStr(ABook.Year);
-      ePublisher.Text := ABook.Publisher;
-      eISBN.Text := ABook.ISBN;
-      eDesc.Text := ABook.Description;
+      eTitle.Text := SourceBook.Title;
+      eAuthors.Text := SourceBook.Authors;
+      eYear.Text := IntToStr(SourceBook.Year);
+      ePublisher.Text := SourceBook.Publisher;
+      eISBN.Text := SourceBook.ISBN;
+      eDesc.Text := SourceBook.Description;
+      if (ABook = nil) and (SourceBook.CoverFile <> '') then
+        eCover.Text := ADB.Paths.CoversDir + SourceBook.CoverFile;
       for I := 0 to cbCat.Items.Count - 1 do
         if (cbCat.Items.Objects[I] <> nil) and
-           (TCategory(cbCat.Items.Objects[I]).ID = ABook.CategoryID) then
+           (TCategory(cbCat.Items.Objects[I]).ID = SourceBook.CategoryID) then
           cbCat.ItemIndex := I;
     end;
     Helper.FormResize(nil);

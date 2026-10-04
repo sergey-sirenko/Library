@@ -29,7 +29,7 @@ var
   Books, Readers, Reports: TTabSheet;
   Copies: TPanel;
   BookAdd, CopyAdd, ReaderAdd, DeleteButton, SaveButton, GenerateButton,
-    CancelButton, FillButton, EditButton, FindBook, FindReader: TButton;
+    CancelButton, FillButton, EditButton, FindBook, FindReader, BookCopy: TButton;
   ISBN, ReaderSearch: TEdit;
   Memo: TMemo;
   Combo: TComboBox;
@@ -50,6 +50,7 @@ begin
     Copies := TPanel.Create(F);
     Copies.Parent := Books;
     BookAdd := Button(Books, 'Добавить');
+    BookCopy := Button(Books, 'Скопировать');
     CopyAdd := Button(Copies, 'Добавить экз.');
     ReaderAdd := Button(Readers, 'Добавить');
     DeleteButton := Button(Books, 'Удалить');
@@ -72,6 +73,7 @@ begin
     Grid.Parent := Copies;
     Router := TButtonShortcuts.ForForm(F);
     Router.Bind(BookAdd, bsAdd, []);
+    Router.Bind(BookCopy, bsCopy, []);
     Router.Bind(CopyAdd, bsAdd, [Copies]);
     Router.Bind(ReaderAdd, bsAdd, []);
     Router.Bind(DeleteButton, bsDelete, []);
@@ -84,6 +86,13 @@ begin
     Router.Bind(FindBook, bsFind, [ISBN, FindBook]);
 
     Check(BookAdd.Caption = 'Добавить (Ins)', 'Подпись Ins');
+    Check(BookCopy.Caption = 'Скопировать (F9)', 'Подпись F9');
+    Check(Router.ResolveButton(Grid, VK_F9, []) = BookCopy, 'Копирование книги по F9');
+    Check(Router.ResolveButton(ISBN, VK_F9, []) = BookCopy, 'F9 из поля поиска книг');
+    Check(Router.ResolveButton(Grid, VK_F9, [ssCtrl]) = nil, 'F9 без модификаторов');
+    BookCopy.Enabled := False;
+    Check(Router.ResolveButton(Grid, VK_F9, []) = nil, 'Недоступное копирование');
+    BookCopy.Enabled := True;
     Check(CopyAdd.Caption = 'Добавить экз. (Ins)', 'Подпись экземпляра');
     Check(DeleteButton.Caption = 'Удалить (Del)', 'Подпись Del');
     Check(EditButton.Caption = 'Изменить (F2)', 'Подпись F2');
@@ -119,6 +128,7 @@ begin
     Check(Router.ResolveButton(Grid, VK_RETURN, []) = nil, 'Обычный Enter сохранён');
     Check(Router.ResolveButton(Grid, VK_RETURN, [ssCtrl]) = nil, 'Скрытое сохранение');
     Pages.ActivePage := Readers;
+    Check(Router.ResolveButton(Readers, VK_F9, []) = nil, 'F9 только на вкладке книг');
     Check(Router.ResolveButton(Readers, VK_INSERT, []) = ReaderAdd, 'Другая вкладка');
     Check(Router.ResolveButton(Readers, VK_RETURN, [ssCtrl]) = SaveButton, 'Сохранение');
     Pages.ActivePage := Reports;
