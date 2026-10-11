@@ -5,7 +5,7 @@ unit uMainForm;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, ExtCtrls,
+  uLibraryGrid, Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, ExtCtrls,
   StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs,
   uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons,
   uOpenRouter, uUpdater;
@@ -59,11 +59,11 @@ type
     btnCopyAdd: TBitBtn;
     chkShowDeleted: TCheckBox;
     chkShowDeletedCopies: TCheckBox;
-    gridBooks: TStringGrid;
+    gridBooks: TLibraryGrid;
     splBooksCopies: TSplitter;
     pnlCopiesBottom: TPanel;
     pnlCopiesTop: TPanel;
-    gridCopies: TStringGrid;
+    gridCopies: TLibraryGrid;
     btnCopyEdit: TBitBtn;
     btnCopyDelete: TBitBtn;
     pnlReadersTop: TPanel;
@@ -75,26 +75,26 @@ type
     btnReaderDelete: TBitBtn;
     btnReaderRestore: TBitBtn;
     chkShowDeletedReaders: TCheckBox;
-    gridReaders: TStringGrid;
+    gridReaders: TLibraryGrid;
     pnlLoansTop: TPanel;
     btnLoanIssue: TBitBtn;
     btnLoanReturn: TBitBtn;
     btnLoanRenew: TBitBtn;
     btnLoanDate: TBitBtn;
     chkLoansOnlyLoaned: TCheckBox;
-    gridLoans: TStringGrid;
-    gridOverdue: TStringGrid;
+    gridLoans: TLibraryGrid;
+    gridOverdue: TLibraryGrid;
     pnlReports: TPanel;
     cbReport: TComboBox;
     btnReportShow: TBitBtn;
     btnReportSave: TBitBtn;
-    gridReport: TStringGrid;
+    gridReport: TLibraryGrid;
     pnlUsersTop: TPanel;
     btnUserAdd: TBitBtn;
     btnUserEdit: TBitBtn;
     btnUserDelete: TBitBtn;
     chkShowDeletedUsers: TCheckBox;
-    gridUsers: TStringGrid;
+    gridUsers: TLibraryGrid;
     sbSettings: TScrollBox;
     pnlSettings: TPanel;
     edtLibName: TEdit;
@@ -125,19 +125,19 @@ type
     btnBackupNow: TBitBtn;
     btnRestoreBackup: TBitBtn;
     lstBackups: TListBox;
-    gridJournal: TStringGrid;
+    gridJournal: TLibraryGrid;
     pnlCatTop: TPanel;
     btnCatAdd: TBitBtn;
     btnCatEdit: TBitBtn;
     btnCatDelete: TBitBtn;
     chkShowDeletedCategories: TCheckBox;
-    gridCategories: TStringGrid;
+    gridCategories: TLibraryGrid;
     pnlLocTop: TPanel;
     btnLocAdd: TBitBtn;
     btnLocEdit: TBitBtn;
     btnLocDelete: TBitBtn;
     chkShowDeletedLocations: TCheckBox;
-    gridLocations: TStringGrid;
+    gridLocations: TLibraryGrid;
     statusBar: TStatusBar;
     procedure FormCreate(Sender: TObject);
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
@@ -241,20 +241,20 @@ type
     function SelectedUser: TUser;
     function SelectedCategory: TCategory;
     function SelectedLocation: TLocation;
-    procedure SetupGrid(G: TStringGrid; const Cols: array of string);
-    function DeletedGridIndex(G: TStringGrid): Integer;
-    procedure SetDeletedColumnVisible(G: TStringGrid; AVisible: Boolean);
+    procedure SetupGrid(G: TLibraryGrid; const Cols: array of string);
+    function DeletedGridIndex(G: TLibraryGrid): Integer;
+    procedure SetDeletedColumnVisible(G: TLibraryGrid; AVisible: Boolean);
     procedure UpdateDeletedColumnVisibility;
-    function FindGridRowByID(G: TStringGrid; AID: TId): Integer;
-    procedure SelectGridRow(G: TStringGrid; ARow: Integer; ASetFocus: Boolean);
-    procedure SelectGridEntity(G: TStringGrid; AID: TId; ASetFocus: Boolean);
-    procedure SelectNearestGridRow(G: TStringGrid; APreferredRow: Integer; ASetFocus: Boolean);
-    procedure UpdateGridActiveMarker(G: TStringGrid);
-    function GridRowHasData(G: TStringGrid; ARow: Integer): Boolean;
+    function FindGridRowByID(G: TLibraryGrid; AID: TId): Integer;
+    procedure SelectGridRow(G: TLibraryGrid; ARow: Integer; ASetFocus: Boolean);
+    procedure SelectGridEntity(G: TLibraryGrid; AID: TId; ASetFocus: Boolean);
+    procedure SelectNearestGridRow(G: TLibraryGrid; APreferredRow: Integer; ASetFocus: Boolean);
+    procedure UpdateGridActiveMarker(G: TLibraryGrid);
+    function GridRowHasData(G: TLibraryGrid; ARow: Integer): Boolean;
     procedure SetupLoansGridEditing;
     procedure SaveGridLayouts;
     procedure LoadGridLayouts;
-    procedure RecalcGridRowHeights(G: TStringGrid);
+    procedure RecalcGridRowHeights(G: TLibraryGrid);
     procedure ClampBooksCopiesPanelHeight;
     procedure SetupUIIcons;
     procedure ApplyButtonIcon(AButton: TBitBtn; AIndex: Integer);
@@ -484,7 +484,7 @@ begin
   end;
 end;
 
-procedure TMainForm.SetupGrid(G: TStringGrid; const Cols: array of string);
+procedure TMainForm.SetupGrid(G: TLibraryGrid; const Cols: array of string);
 var
   I: Integer;
   W: Integer;
@@ -522,9 +522,10 @@ begin
       W := 280;
     G.ColWidths[I + DATA_FIRST_COL] := W;
   end;
+  G.Configure('', '', DATA_FIRST_COL, @GridSorted);
 end;
 
-function TMainForm.DeletedGridIndex(G: TStringGrid): Integer;
+function TMainForm.DeletedGridIndex(G: TLibraryGrid): Integer;
 begin
   Result := -1;
   if G = gridBooks then Result := 0
@@ -535,31 +536,10 @@ begin
   else if G = gridUsers then Result := 5;
 end;
 
-procedure TMainForm.SetDeletedColumnVisible(G: TStringGrid; AVisible: Boolean);
-var
-  Index, Col: Integer;
+procedure TMainForm.SetDeletedColumnVisible(G: TLibraryGrid; AVisible: Boolean);
 begin
-  Index := DeletedGridIndex(G);
-  if (Index < 0) or (G = nil) then
-    Exit;
-  Col := G.ColCount - 1;
-  if AVisible then
-  begin
-    if G.ColWidths[Col] >= 40 then
-      FDeletedColumnWidths[Index] := G.ColWidths[Col]
-    else
-    begin
-      if FDeletedColumnWidths[Index] < 40 then
-        FDeletedColumnWidths[Index] := 90;
-      G.ColWidths[Col] := FDeletedColumnWidths[Index];
-    end;
-  end
-  else
-  begin
-    if G.ColWidths[Col] >= 40 then
-      FDeletedColumnWidths[Index] := G.ColWidths[Col];
-    G.ColWidths[Col] := 0;
-  end;
+  if (G = nil) or (DeletedGridIndex(G) < 0) then Exit;
+  G.SetFieldAllowed(G.ColCount - 1, AVisible);
 end;
 
 procedure TMainForm.UpdateDeletedColumnVisibility;
@@ -572,7 +552,7 @@ begin
   SetDeletedColumnVisible(gridUsers, chkShowDeletedUsers.Checked);
 end;
 
-function TMainForm.GridRowHasData(G: TStringGrid; ARow: Integer): Boolean;
+function TMainForm.GridRowHasData(G: TLibraryGrid; ARow: Integer): Boolean;
 var
   C: Integer;
 begin
@@ -586,7 +566,7 @@ begin
       Exit(True);
 end;
 
-procedure TMainForm.UpdateGridActiveMarker(G: TStringGrid);
+procedure TMainForm.UpdateGridActiveMarker(G: TLibraryGrid);
 var
   R: Integer;
 begin
@@ -600,7 +580,7 @@ begin
       G.Cells[ACTIVE_MARKER_COL, R] := '';
 end;
 
-function TMainForm.FindGridRowByID(G: TStringGrid; AID: TId): Integer;
+function TMainForm.FindGridRowByID(G: TLibraryGrid; AID: TId): Integer;
 var
   R: Integer;
 begin
@@ -613,7 +593,7 @@ begin
       Exit(R);
 end;
 
-procedure TMainForm.SelectGridRow(G: TStringGrid; ARow: Integer; ASetFocus: Boolean);
+procedure TMainForm.SelectGridRow(G: TLibraryGrid; ARow: Integer; ASetFocus: Boolean);
 var
   Vis: Integer;
 begin
@@ -645,7 +625,7 @@ begin
     G.SetFocus;
 end;
 
-procedure TMainForm.SelectNearestGridRow(G: TStringGrid; APreferredRow: Integer; ASetFocus: Boolean);
+procedure TMainForm.SelectNearestGridRow(G: TLibraryGrid; APreferredRow: Integer; ASetFocus: Boolean);
 var
   R: Integer;
 begin
@@ -668,7 +648,7 @@ begin
   UpdateGridActiveMarker(G);
 end;
 
-procedure TMainForm.SelectGridEntity(G: TStringGrid; AID: TId; ASetFocus: Boolean);
+procedure TMainForm.SelectGridEntity(G: TLibraryGrid; AID: TId; ASetFocus: Boolean);
 var
   Row: Integer;
 begin
@@ -682,12 +662,12 @@ end;
 procedure TMainForm.GridPrepareCanvas(Sender: TObject; aCol, aRow: Integer;
   aState: TGridDrawState);
 var
-  G: TStringGrid;
+  G: TLibraryGrid;
   TS: TTextStyle;
 begin
   { PrepareCanvas LCL всегда ставит SingleLine:=True без Columns — из‑за этого
     Wordbreak не работает. Принудительно включаем многострочный перенос. }
-  G := Sender as TStringGrid;
+  G := Sender as TLibraryGrid;
   TS := G.Canvas.TextStyle;
   if aCol = ACTIVE_MARKER_COL then
   begin
@@ -714,7 +694,7 @@ begin
   end;
 end;
 
-procedure TMainForm.RecalcGridRowHeights(G: TStringGrid);
+procedure TMainForm.RecalcGridRowHeights(G: TLibraryGrid);
 var
   R, C, MaxH, CellH, BaseH, W: Integer;
   CalcRect: TRect;
@@ -730,6 +710,7 @@ begin
     MaxH := BaseH;
     for C := DATA_FIRST_COL to G.ColCount - 1 do
     begin
+      if G.ColWidths[C] <= 0 then Continue;
       S := G.Cells[C, R];
       if S = '' then
         Continue;
@@ -753,8 +734,8 @@ procedure TMainForm.GridSorted(Sender: TObject);
 begin
   if Sender = gridReport then
     UpdateReportRowNumbers;
-  RecalcGridRowHeights(Sender as TStringGrid);
-  UpdateGridActiveMarker(Sender as TStringGrid);
+  RecalcGridRowHeights(Sender as TLibraryGrid);
+  UpdateGridActiveMarker(Sender as TLibraryGrid);
 end;
 
 procedure TMainForm.UpdateReportRowNumbers;
@@ -771,11 +752,11 @@ procedure TMainForm.GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: I
 begin
   if IsColumn and (Index = ACTIVE_MARKER_COL) then
   begin
-    (Sender as TStringGrid).ColWidths[ACTIVE_MARKER_COL] := ACTIVE_MARKER_WIDTH;
+    (Sender as TLibraryGrid).ColWidths[ACTIVE_MARKER_COL] := ACTIVE_MARKER_WIDTH;
     Exit;
   end;
   if IsColumn then
-    RecalcGridRowHeights(Sender as TStringGrid);
+    RecalcGridRowHeights(Sender as TLibraryGrid);
 end;
 
 procedure TMainForm.SetupLoansGridEditing;
@@ -800,7 +781,7 @@ var
     Result := 'User.' + IntToStr(FDB.CurrentUser.ID) + '.' + AName;
   end;
 
-  procedure SaveOne(G: TStringGrid; const AName: string);
+  procedure SaveOne(G: TLibraryGrid; const AName: string);
   var
     I, DeletedIndex, W: Integer;
     S: string;
@@ -912,7 +893,7 @@ var
       end;
   end;
 
-  procedure LoadOne(G: TStringGrid; const AName: string);
+  procedure LoadOne(G: TLibraryGrid; const AName: string);
   var
     I, W, N, TargetCol: Integer;
     Raw: string;
@@ -1134,6 +1115,7 @@ var
   L: TLoan;
   AllowEdit: Boolean;
 begin
+  aCol := gridLoans.LogicalColumn(aCol);
   CanSelect := True;
   AllowEdit := False;
   if (aRow > 0) and ((aCol = FLoanDueCol) or (aCol = FLoanIssuedCol)) then
@@ -1152,6 +1134,7 @@ procedure TMainForm.gridLoansValidateEntry(Sender: TObject; aCol, aRow: Integer;
 var
   Normalized, Err: string;
 begin
+  aCol := gridLoans.LogicalColumn(aCol);
   if (aCol <> FLoanDueCol) and (aCol <> FLoanIssuedCol) then
   begin
     NewValue := OldValue;
@@ -1455,13 +1438,13 @@ end;
 
 procedure TMainForm.gridBooksSelection(Sender: TObject; aCol, aRow: Integer);
 begin
-  UpdateGridActiveMarker(Sender as TStringGrid);
+  UpdateGridActiveMarker(Sender as TLibraryGrid);
   RefreshCopies;
 end;
 
 procedure TMainForm.gridAnySelection(Sender: TObject; aCol, aRow: Integer);
 begin
-  UpdateGridActiveMarker(Sender as TStringGrid);
+  UpdateGridActiveMarker(Sender as TLibraryGrid);
 end;
 
 procedure TMainForm.splBooksCopiesMoved(Sender: TObject);
@@ -1484,6 +1467,15 @@ begin
   ApplyUIFontSize;
   ApplyRoleUI;
   LoadGridLayouts;
+  gridBooks.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Books', 1, @GridSorted);
+  gridCopies.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Copies', 1, @GridSorted);
+  gridReaders.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Readers', 1, @GridSorted);
+  gridLoans.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.LoansCategory', 1, @GridSorted);
+  gridOverdue.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Overdue', 1, @GridSorted);
+  gridCategories.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Categories', 1, @GridSorted);
+  gridLocations.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Locations', 1, @GridSorted);
+  gridUsers.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Users', 1, @GridSorted);
+  gridJournal.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Journal', 1, @GridSorted);
   edtBookSearch.OnChange := @edtBookSearchChange;
   edtBookSearchInv.OnChange := @edtBookSearchInvChange;
   ClampBooksCopiesPanelHeight;
@@ -2840,6 +2832,7 @@ var
   Parts: TStringList;
   R, C, MaxCols: Integer;
 begin
+  gridReport.BeginSchema;
   if FReportLines = nil then
     FReportLines := TStringList.Create;
   FReportLines.Clear;
@@ -2881,6 +2874,8 @@ begin
   finally
     Parts.Free;
   end;
+  gridReport.Configure(FDB.Paths.UserLayoutFile,
+    'User.' + IntToStr(FDB.CurrentUser.ID) + '.Report.' + IntToStr(cbReport.ItemIndex), 1, @GridSorted);
   ApplyGridSorting(gridReport);
   UpdateGridActiveMarker(gridReport);
 end;
@@ -3187,7 +3182,8 @@ begin
   Favorites := nil;
   try
     if SelectOpenRouterModelDialog(ApiKey, Current,
-      FDB.Settings.OpenRouterFavoriteModels, Selected, Favorites) then
+      FDB.Settings.OpenRouterFavoriteModels, Selected, Favorites,
+      FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Models') then
     begin
       FDB.Settings.OpenRouterFavoriteModels.Assign(Favorites);
       RefreshOpenRouterModelList;

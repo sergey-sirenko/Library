@@ -5,7 +5,7 @@ unit uEditDialogs;
 interface
 
 uses
-  Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
+  uLibraryGrid, Classes, SysUtils, Math, Forms, Controls, Graphics, Dialogs, StdCtrls, ExtCtrls,
   Calendar, Grids, uTypes, uEntities, uDatabase, uUIFont;
 
 function EditBookDialog(ADB: TLibraryDB; ABook: TBook; out AResultID: TId;
@@ -406,7 +406,7 @@ type
   public
     DB: TLibraryDB;
     Form: TForm;
-    Grid: TStringGrid;
+    Grid: TLibraryGrid;
     Location: TComboBox;
     Problems: TMemo;
     Items: TList;
@@ -1844,7 +1844,7 @@ function ImportRecognizedBooksDialog(ADB: TLibraryDB; AItems: TList;
 var
   F: TForm;
   Helper: TRecognizedImportDlgHelper;
-  Grid: TStringGrid;
+  Grid: TLibraryGrid;
   Location: TComboBox;
   Problems: TMemo;
   lblTable, lblStats, lblLocation, lblProblems: TLabel;
@@ -1882,7 +1882,7 @@ begin
     lblTable.Caption := 'Проверьте и при необходимости исправьте распознанные данные:';
     lblTable.SetBounds(16, 14, F.ClientWidth - 32, TextH + 4);
 
-    Grid := TStringGrid.Create(F);
+    Grid := TLibraryGrid.Create(F);
     Grid.Parent := F;
     Grid.SetBounds(16, lblTable.Top + lblTable.Height + 8,
       F.ClientWidth - 32, 270);
@@ -1964,6 +1964,8 @@ begin
       CostText := Format('$%.6f', [AStats.RecognitionCost])
     else
       CostText := '—';
+    Grid.Configure(ADB.Paths.UserLayoutFile,
+      'User.' + IntToStr(ADB.CurrentUser.ID) + '.RecognizedBooks', 0);
     TGridSorting.CreateFor(Grid, 0, nil);
     ApplyGridSorting(Grid);
 

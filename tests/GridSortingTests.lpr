@@ -3,7 +3,7 @@ program GridSortingTests;
 {$mode objfpc}{$H+}
 
 uses
-  Interfaces, Forms, Classes, SysUtils, Grids, uGridSorting;
+  Interfaces, Forms, Classes, SysUtils, Grids, uLibraryGrid, uGridSorting;
 
 type
   TKeySource = class
@@ -57,11 +57,11 @@ end;
 
 procedure TestRows;
 var
-  G: TStringGrid;
+  G: TLibraryGrid;
   S: TGridSorting;
   A, B, C: TObject;
 begin
-  G := TStringGrid.Create(nil);
+  G := TLibraryGrid.Create(nil);
   A := TObject.Create;
   B := TObject.Create;
   C := TObject.Create;
@@ -132,12 +132,12 @@ end;
 
 procedure TestEditableRows;
 var
-  G: TStringGrid;
+  G: TLibraryGrid;
   A, B: TStringList;
   Items: TList;
   S: TGridSorting;
 begin
-  G := TStringGrid.Create(nil);
+  G := TLibraryGrid.Create(nil);
   Items := TList.Create;
   A := TStringList.Create;
   B := TStringList.Create;
@@ -195,7 +195,7 @@ const
   DEFAULT_COLS: array[0..11] of Integer = (0, 0, 0, 1, 1, 0, 0, 1, 0, 1, 1, 1);
 var
   I, C: Integer;
-  G: TStringGrid;
+  G: TLibraryGrid;
   Parts: TStringList;
   S: TGridSorting;
   Source: TKeySource;
@@ -206,7 +206,7 @@ begin
     Parts.StrictDelimiter := True;
     for I := 0 to High(HEADERS) do
     begin
-      G := TStringGrid.Create(nil);
+      G := TLibraryGrid.Create(nil);
       try
         G.FixedCols := 0;
         Parts.DelimitedText := HEADERS[I];
@@ -224,7 +224,7 @@ begin
   finally
     Parts.Free;
   end;
-  G := TStringGrid.Create(nil);
+  G := TLibraryGrid.Create(nil);
   Source := TKeySource.Create;
   try
     G.FixedCols := 0;
@@ -255,9 +255,133 @@ begin
   end;
 end;
 
+procedure TestColumnLayouts;
+var
+  G, H: TLibraryGrid;
+  S: TGridSorting;
+  FileName: string;
+  SL: TStringList;
+  Obj: TObject;
+  UseColumns: Boolean;
+  procedure Fill(Grid: TLibraryGrid);
+  begin
+    if Grid.ColCount <> 4 then Grid.ColCount := 4;
+    Grid.RowCount := 3;
+    Grid.FixedCols := 0;
+    if UseColumns then
+      while Grid.Columns.Count < 4 do Grid.Columns.Add;
+    Grid.Cells[0, 0] := '';
+    Grid.Cells[1, 0] := 'Название';
+    Grid.Cells[2, 0] := 'Год';
+    Grid.Cells[3, 0] := 'Категория';
+    Grid.ColWidths[1] := 180;
+    Grid.ColWidths[2] := 90;
+    Grid.ColWidths[3] := 140;
+    Grid.Cells[1, 1] := 'Б';
+    Grid.Cells[1, 2] := 'А';
+    Grid.Cells[2, 1] := '2';
+    Grid.Cells[2, 2] := '10';
+    Grid.Cells[3, 1] := '1';
+    Grid.Cells[3, 2] := '0';
+    Grid.Objects[0, 1] := Obj;
+  end;
+begin
+  FileName := GetTempFileName(GetTempDir, 'grid');
+  Obj := TObject.Create;
+  SL := TStringList.Create;
+  try
+    for UseColumns := False to True do
+    begin
+      SL.Clear;
+      SL.Values['Unrelated'] := 'keep';
+      SL.SaveToFile(FileName);
+      G := TLibraryGrid.Create(nil);
+      H := TLibraryGrid.Create(nil);
+      try
+        Fill(G);
+        G.Configure(FileName, 'User.1.Books', 1);
+        S := TGridSorting.CreateFor(G, 1, nil);
+        S.Apply;
+        G.Col := 2;
+        G.MoveField(2, 1);
+        Check(G.LogicalColumn(0) = 0, 'Служебная колонка закреплена');
+        Check(G.LogicalColumn(1) = 2, 'Новый порядок колонок');
+        Check(G.Col = 2, 'Выбранное поле сохранено');
+        Check((G.Cells[1, 1] = 'А') and (G.Cells[2, 1] = '10'), 'Логические поля после перестановки');
+        Check(Grids.TStringGrid(G).Cells[1, 1] = '10', 'Физические ячейки после перестановки');
+        G.Cells[2, 1] := '11';
+        Check(Grids.TStringGrid(G).Cells[1, 1] = '11', 'Запись в переставленное поле');
+        Grids.TStringGrid(G).Cells[1, 1] := '12';
+        Check(G.Cells[2, 1] = '12', 'Правка редактора относится к логическому полю');
+        G.OnHeaderClick(G, True, 1);
+        Check((S.Column = 2) and (G.Cells[2, 1] = '2'), 'Сортировка по переставленному заголовку');
+        Check(G.Objects[0, 1] = Obj, 'Объект строки сохранён');
+        G.SetFieldVisible(2, False);
+        Check(G.ColWidths[2] = 0, 'Колонка скрыта');
+        G.Col := 2;
+        Check(G.Col <> 2, 'Выделение не попадает в скрытую колонку');
+        G.SetFieldVisible(2, True);
+        Check(G.ColWidths[2] = 90, 'Ширина восстановлена');
+        G.SetFieldAllowed(3, False);
+        G.SetFieldVisible(3, True);
+        Check(G.ColWidths[3] = 0, 'Системное ограничение видимости');
+        G.SetFieldAllowed(3, True);
+        Check(G.ColWidths[3] = 140, 'Системная видимость восстановлена');
+        G.SetFieldVisible(3, False);
+        G.ColWidths[2] := 115;
+        G.SaveLayout;
+        Fill(H);
+        H.Configure(FileName, 'User.1.Books', 1);
+        Check(H.LogicalColumn(1) = 2, 'Порядок восстановлен из файла');
+        Check(H.ColWidths[2] = 115, 'Ширина восстановлена из файла');
+        Check((not H.FieldVisible(3)) and (H.ColWidths[3] = 0), 'Видимость восстановлена из файла');
+        SL.LoadFromFile(FileName);
+        Check(SL.Values['Unrelated'] = 'keep', 'Чужие настройки сохранены');
+        H.BeginSchema;
+        Fill(H);
+        H.Configure(FileName, 'User.2.Books', 1);
+        Check((H.LogicalColumn(1) = 1) and H.FieldVisible(3), 'Настройки пользователей независимы');
+        H.BeginSchema;
+        Fill(H);
+        H.Configure(FileName, 'User.1.Report.0', 1);
+        Check(H.LogicalColumn(1) = 1, 'Раскладки разных списков независимы');
+        G.ResetLayout;
+        Check((G.LogicalColumn(1) = 1) and G.FieldVisible(3) and
+          (G.ColWidths[2] = 90), 'Стандартный вид восстановлен');
+        G.BeginSchema;
+        Fill(G);
+        SL.LoadFromFile(FileName);
+        SL.Values['Corrupt.ColumnsV1.Order'] := '1,01,3';
+        SL.SaveToFile(FileName);
+        G.Configure(FileName, 'Corrupt', 1);
+        Check(G.LogicalColumn(1) = 1, 'Повреждённая перестановка игнорируется');
+        G.BeginSchema;
+        Fill(G);
+        SL.LoadFromFile(FileName);
+        SL.Values['Empty.ColumnsV1.Hidden.1'] := '1';
+        SL.Values['Empty.ColumnsV1.Hidden.2'] := '1';
+        SL.Values['Empty.ColumnsV1.Hidden.3'] := '1';
+        SL.SaveToFile(FileName);
+        G.Configure(FileName, 'Empty', 1);
+        Check(G.ColWidths[1] > 0, 'Повреждённые настройки не скрывают все поля');
+        G.MoveField(0, 2);
+        Check(G.LogicalColumn(0) = 0, 'Служебную колонку нельзя переместить');
+      finally
+        H.Free;
+        G.Free;
+      end;
+    end;
+  finally
+    SL.Free;
+    Obj.Free;
+    DeleteFile(FileName);
+  end;
+end;
+
 begin
   Application.Initialize;
   try
+    TestColumnLayouts;
     TestValues;
     TestRows;
     TestEditableRows;

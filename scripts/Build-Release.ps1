@@ -59,11 +59,14 @@ if ($LASTEXITCODE -ne 0) {
   throw 'Тесты обновления завершились с ошибкой.'
 }
 
-function Test-UpdaterExecutable {
-  $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Library Updater Обновление-" + [guid]::NewGuid().ToString('N'))
+function Test-UpdaterExecutable([string]$TargetBase = [System.IO.Path]::GetTempPath()) {
+  $testName = "Library Updater Обновление-" + [guid]::NewGuid().ToString('N')
+  $testRoot = [System.IO.Path]::GetFullPath((Join-Path ([System.IO.Path]::GetTempPath()) $testName))
+  $targetRoot = [System.IO.Path]::GetFullPath((Join-Path $TargetBase ($testName + '-target')))
   New-Item -ItemType Directory -Path $testRoot | Out-Null
+  New-Item -ItemType Directory -Path $targetRoot -Force | Out-Null
   try {
-    $target = Join-Path $testRoot 'Library.exe'
+    $target = Join-Path $targetRoot 'Library.exe'
     $source = Join-Path $testRoot 'NewLibrary.exe'
     $log = Join-Path $testRoot 'updater.log'
     $marker = "$target.started"
@@ -73,7 +76,7 @@ function Test-UpdaterExecutable {
       "--restart `"$target`" --log `"$log`" --silent"
     $process = Start-Process -FilePath (Join-Path $repoRoot 'Prog\LibraryUpdater.exe') `
       -ArgumentList $arguments `
-      -Wait -PassThru
+      -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) {
       if (Test-Path -LiteralPath $log) {
         Get-Content -LiteralPath $log | Write-Host
@@ -89,6 +92,10 @@ function Test-UpdaterExecutable {
     if ((Get-Content -LiteralPath "$target.old" -Raw) -ne 'old-version') {
       throw 'Updater не сохранил предыдущую версию.'
     }
+    if ((Get-FileHash -LiteralPath $target).Hash -ne
+        (Get-FileHash -LiteralPath (Join-Path $repoRoot 'lib\tests\UpdaterProbe.exe')).Hash) {
+      throw 'Установленный EXE отличается от подготовленного.'
+    }
 
     Remove-Item -LiteralPath $target,$marker,"$target.old" -Force
     [System.IO.File]::WriteAllText($target, 'rollback-version')
@@ -97,22 +104,55 @@ function Test-UpdaterExecutable {
     }
     $process = Start-Process -FilePath (Join-Path $repoRoot 'Prog\LibraryUpdater.exe') `
       -ArgumentList $arguments `
-      -Wait -PassThru
-    if ($process.ExitCode -eq 0) {
+      -WindowStyle Hidden -Wait -PassThru
+    if ($process.ExitCode -ne 5) {
       throw 'Updater не сообщил об ошибке отсутствующего нового EXE.'
+    }
+    if ((Get-Content -LiteralPath $log -Raw -Encoding UTF8) -notmatch 'новый Library\.exe, код 2\.') {
+      throw 'Updater не сохранил системный код ошибки отсутствующего файла.'
     }
     if ((Get-Content -LiteralPath $target -Raw) -ne 'rollback-version') {
       throw 'Updater не восстановил предыдущую версию после ошибки.'
     }
+
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'lib\tests\UpdaterProbe.exe') -Destination $source
+    $missingRestart = Join-Path $targetRoot 'Missing.exe'
+    $restartArguments = $arguments.Replace("--restart `"$target`"", "--restart `"$missingRestart`"")
+    $process = Start-Process -FilePath (Join-Path $repoRoot 'Prog\LibraryUpdater.exe') `
+      -ArgumentList $restartArguments `
+      -WindowStyle Hidden -Wait -PassThru
+    if (($process.ExitCode -ne 6) -or
+        ((Get-Content -LiteralPath $target -Raw) -ne 'rollback-version')) {
+      throw 'Updater не восстановил предыдущую версию после ошибки перезапуска.'
+    }
+    Write-Host "Установка, код ошибки и оба сценария отката проверены: $TargetBase"
   }
   finally {
-    if (Test-Path -LiteralPath $testRoot) {
-      Remove-Item -LiteralPath $testRoot -Recurse -Force
+    foreach ($cleanup in @(
+      @{ Path = $testRoot; Base = [System.IO.Path]::GetTempPath(); Name = $testName },
+      @{ Path = $targetRoot; Base = $TargetBase; Name = ($testName + '-target') }
+    )) {
+      $expectedPath = [System.IO.Path]::GetFullPath((Join-Path $cleanup.Base $cleanup.Name))
+      if (($cleanup.Path -ne $expectedPath) -or
+          ([System.IO.Path]::GetFileName($cleanup.Path) -ne $cleanup.Name)) {
+        throw "Недопустимый путь удаления тестовых файлов: $($cleanup.Path)"
+      }
+      if (Test-Path -LiteralPath $cleanup.Path) {
+        Remove-Item -LiteralPath $cleanup.Path -Recurse -Force
+      }
     }
   }
 }
 
 Test-UpdaterExecutable
+$tempVolume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+$repoVolume = [System.IO.Path]::GetPathRoot($repoRoot)
+if ($tempVolume -ne $repoVolume) {
+  Test-UpdaterExecutable (Join-Path $repoRoot 'lib\tests')
+}
+else {
+  Write-Warning 'Проверка переноса между дисками пропущена: TEMP и репозиторий на одном диске.'
+}
 
 $appExe = Join-Path $repoRoot 'Prog\Library.exe'
 $updaterExe = Join-Path $repoRoot 'Prog\LibraryUpdater.exe'

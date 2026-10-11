@@ -62,11 +62,12 @@ end;
 
 procedure ShowFailure(const AMessage: string);
 var
-  W: WideString;
+  W, TitleW: WideString;
 begin
   if SilentMode then Exit;
   W := Wide(AMessage);
-  MessageBoxW(0, PWideChar(W), 'Обновление библиотеки', MB_OK or MB_ICONERROR);
+  TitleW := Wide('Обновление библиотеки');
+  MessageBoxW(0, PWideChar(W), PWideChar(TitleW), MB_OK or MB_ICONERROR);
 end;
 
 function ReadOption(const AName: string; out AValue: string): Boolean;
@@ -110,14 +111,16 @@ begin
   end;
 end;
 
-function MoveReplace(const ASource, ADestination: string): Boolean;
+function MoveReplace(const ASource, ADestination: string;
+  out AErrorCode: DWORD): Boolean;
 var
   SourceW, DestinationW: WideString;
 begin
   SourceW := Wide(ASource);
   DestinationW := Wide(ADestination);
   Result := MoveFileExW(PWideChar(SourceW), PWideChar(DestinationW),
-    MOVEFILE_REPLACE_EXISTING or MOVEFILE_WRITE_THROUGH_FLAG);
+    MOVEFILE_REPLACE_EXISTING or MOVEFILE_COPY_ALLOWED or MOVEFILE_WRITE_THROUGH_FLAG);
+  if Result then AErrorCode := ERROR_SUCCESS else AErrorCode := GetLastError;
 end;
 
 function DeleteWide(const AFileName: string): Boolean;
@@ -128,7 +131,7 @@ begin
   Result := DeleteFileW(PWideChar(W));
 end;
 
-function StartApplication(const AFileName: string): Boolean;
+function StartApplication(const AFileName: string; out AErrorCode: DWORD): Boolean;
 var
   Info: TShellExecuteInfoW;
   FileW, DirW: WideString;
@@ -143,6 +146,7 @@ begin
   Info.lpDirectory := PWideChar(DirW);
   Info.nShow := SW_SHOWNORMAL;
   Result := ShellExecuteExW(@Info);
+  if Result then AErrorCode := ERROR_SUCCESS else AErrorCode := GetLastError;
 end;
 
 procedure ScheduleDirectoryCleanup(const ADirectory: string);
@@ -184,7 +188,7 @@ end;
 var
   WaitPidText, SourceFile, TargetFile, RestartFile, LogFile, CleanupDir: string;
   OldFile, ErrorText: string;
-  WaitPid: DWORD;
+  WaitPid, ErrorCode, RollbackErrorCode: DWORD;
   HadOld: Boolean;
 begin
   SetMultiByteConversionCodePage(CP_UTF8);
@@ -214,31 +218,45 @@ begin
   OldFile := TargetFile + '.old';
   if FileExists(OldFile) then DeleteWide(OldFile);
   HadOld := FileExists(TargetFile);
-  if HadOld and (not MoveReplace(TargetFile, OldFile)) then
+  if HadOld and (not MoveReplace(TargetFile, OldFile, ErrorCode)) then
   begin
     ErrorText := 'Не удалось сохранить предыдущую версию Library.exe, код ' +
-      IntToStr(GetLastError) + '.';
+      IntToStr(ErrorCode) + '.';
     WriteLog(LogFile, ErrorText);
     ShowFailure(ErrorText);
     Halt(4);
   end;
-  if not MoveReplace(SourceFile, TargetFile) then
+  if not MoveReplace(SourceFile, TargetFile, ErrorCode) then
   begin
     ErrorText := 'Не удалось установить новый Library.exe, код ' +
-      IntToStr(GetLastError) + '.';
-    if HadOld then MoveReplace(OldFile, TargetFile);
-    WriteLog(LogFile, ErrorText + ' Выполнен откат.');
-    ShowFailure(ErrorText + LineEnding + 'Восстановлена предыдущая версия.');
+      IntToStr(ErrorCode) + '.';
+    if HadOld then
+    begin
+      if MoveReplace(OldFile, TargetFile, RollbackErrorCode) then
+        ErrorText := ErrorText + LineEnding + 'Восстановлена предыдущая версия.'
+      else
+        ErrorText := ErrorText + LineEnding + 'Не удалось восстановить предыдущую версию, код ' +
+          IntToStr(RollbackErrorCode) + '. Предыдущий файл сохранён: ' + OldFile;
+    end;
+    WriteLog(LogFile, ErrorText);
+    ShowFailure(ErrorText);
     Halt(5);
   end;
-  if not StartApplication(RestartFile) then
+  if not StartApplication(RestartFile, ErrorCode) then
   begin
     ErrorText := 'Не удалось запустить обновлённую программу, код ' +
-      IntToStr(GetLastError) + '.';
+      IntToStr(ErrorCode) + '.';
     DeleteWide(TargetFile);
-    if HadOld then MoveReplace(OldFile, TargetFile);
-    WriteLog(LogFile, ErrorText + ' Выполнен откат.');
-    ShowFailure(ErrorText + LineEnding + 'Восстановлена предыдущая версия.');
+    if HadOld then
+    begin
+      if MoveReplace(OldFile, TargetFile, RollbackErrorCode) then
+        ErrorText := ErrorText + LineEnding + 'Восстановлена предыдущая версия.'
+      else
+        ErrorText := ErrorText + LineEnding + 'Не удалось восстановить предыдущую версию, код ' +
+          IntToStr(RollbackErrorCode) + '. Предыдущий файл сохранён: ' + OldFile;
+    end;
+    WriteLog(LogFile, ErrorText);
+    ShowFailure(ErrorText);
     Halt(6);
   end;
   WriteLog(LogFile, 'Обновление установлено, программа перезапущена.');

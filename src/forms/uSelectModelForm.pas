@@ -5,7 +5,7 @@ unit uSelectModelForm;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, Grids, Buttons,
+  uLibraryGrid, Classes, SysUtils, Forms, Controls, Graphics, Dialogs, StdCtrls, Grids, Buttons,
   ExtCtrls, Windows,
   uOpenRouterModels;
 
@@ -14,7 +14,8 @@ uses
   При отказе или ошибке загрузки — False. }
 function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
   const AFavoriteModels: TStrings; out ASelectedId: string;
-  out ASelectedFavoriteModels: TStringList): Boolean;
+  out ASelectedFavoriteModels: TStringList;
+  const ALayoutFile: string = ''; const ALayoutKey: string = ''): Boolean;
 
 implementation
 
@@ -60,7 +61,7 @@ type
 
   TSelectModelForm = class(TForm)
     edtFilter: TEdit;
-    grid: TStringGrid;
+    grid: TLibraryGrid;
     btnOK: TBitBtn;
     btnCancel: TBitBtn;
     lblHint: TLabel;
@@ -94,7 +95,8 @@ type
 
 function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
   const AFavoriteModels: TStrings; out ASelectedId: string;
-  out ASelectedFavoriteModels: TStringList): Boolean;
+  out ASelectedFavoriteModels: TStringList;
+  const ALayoutFile, ALayoutKey: string): Boolean;
 var
   F: TSelectModelForm;
   LoadingForm: TModelsLoadingForm;
@@ -137,6 +139,7 @@ begin
   SortModelsByPromptPrice(Models);
   F := TSelectModelForm.Create(nil);
   try
+    F.grid.Configure(ALayoutFile, ALayoutKey, 0);
     F.FAllModels := Models;
     F.FCurrentId := ACurrentId;
     F.FFavoriteModels.Assign(AFavoriteModels);
@@ -170,7 +173,7 @@ begin
     begin
       FilterPopularPaid(FModels);
       SortModelsByPromptPrice(FModels);
-      { Ограничиваем каталог, чтобы TStringGrid не блокировал интерфейс
+      { Ограничиваем каталог, чтобы TLibraryGrid не блокировал интерфейс
         при создании тысяч строк. Модель вне списка можно ввести вручную. }
       if Length(FModels) > MAX_MODELS_IN_DIALOG then
         SetLength(FModels, MAX_MODELS_IN_DIALOG);
@@ -285,7 +288,7 @@ begin
   lblStatus.AutoSize := True;
   lblStatus.Caption := '';
 
-  grid := TStringGrid.Create(Self);
+  grid := TLibraryGrid.Create(Self);
   grid.Parent := Self;
   grid.Left := MARGIN;
   grid.Top := MARGIN + 56;
@@ -417,6 +420,7 @@ var
   Col, Row: Integer;
 begin
   grid.MouseToCell(X, Y, Col, Row);
+  Col := grid.LogicalColumn(Col);
   if (Button = mbLeft) and (Col = COL_FAVORITE) and (Row > 0) then
     ToggleFavorite(grid.Cells[COL_ID, Row]);
 end;

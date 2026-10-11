@@ -129,7 +129,7 @@ object MainForm: TMainForm
           TabOrder = 10
         end
       end
-      object gridBooks: TStringGrid
+      object gridBooks: TLibraryGrid
         Left = 0
         Height = 333
         Top = 44
@@ -206,7 +206,7 @@ object MainForm: TMainForm
           TabOrder = 3
         end
       end
-      object gridCopies: TStringGrid
+      object gridCopies: TLibraryGrid
         Left = 0
         Height = 160
         Top = 44
@@ -301,7 +301,7 @@ object MainForm: TMainForm
           TabOrder = 6
         end
       end
-      object gridReaders: TStringGrid
+      object gridReaders: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -371,7 +371,7 @@ object MainForm: TMainForm
           TabOrder = 4
         end
       end
-      object gridLoans: TStringGrid
+      object gridLoans: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -392,7 +392,7 @@ object MainForm: TMainForm
       Caption = 'Просрочки'
       ClientHeight = 586
       ClientWidth = 1016
-      object gridOverdue: TStringGrid
+      object gridOverdue: TLibraryGrid
         Left = 0
         Height = 586
         Top = 0
@@ -454,7 +454,7 @@ object MainForm: TMainForm
           TabOrder = 3
         end
       end
-      object gridCategories: TStringGrid
+      object gridCategories: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -515,7 +515,7 @@ object MainForm: TMainForm
           TabOrder = 3
         end
       end
-      object gridLocations: TStringGrid
+      object gridLocations: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -566,7 +566,7 @@ object MainForm: TMainForm
           TabOrder = 2
         end
       end
-      object gridReport: TStringGrid
+      object gridReport: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -627,7 +627,7 @@ object MainForm: TMainForm
           TabOrder = 3
         end
       end
-      object gridUsers: TStringGrid
+      object gridUsers: TLibraryGrid
         Left = 0
         Height = 542
         Top = 44
@@ -912,7 +912,7 @@ object MainForm: TMainForm
           OnClick = btnJournalKeepMonthClick
         end
       end
-      object gridJournal: TStringGrid
+      object gridJournal: TLibraryGrid
         Left = 0
         Height = 538
         Top = 48

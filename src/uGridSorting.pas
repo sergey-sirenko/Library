@@ -5,7 +5,7 @@ unit uGridSorting;
 interface
 
 uses
-  Classes, SysUtils, Grids;
+  uLibraryGrid, Classes, SysUtils, Grids;
 
 type
   TGridSortKind = (gskText, gskNumber, gskDate, gskInventoryRange);
@@ -14,7 +14,7 @@ type
   { Состояние принадлежит таблице и живёт только до закрытия окна. }
   TGridSorting = class(TComponent)
   private
-    FGrid: TStringGrid;
+    FGrid: TLibraryGrid;
     FFirstCol, FColumn: Integer;
     FDescending, FSorting: Boolean;
     FSchema: string;
@@ -25,7 +25,7 @@ type
     procedure EditingDone(Sender: TObject);
     procedure UpdateHeaders;
   public
-    constructor CreateFor(AGrid: TStringGrid; AFirstCol: Integer;
+    constructor CreateFor(AGrid: TLibraryGrid; AFirstCol: Integer;
       AAfterSort: TNotifyEvent);
     procedure Apply;
     procedure ClickColumn(AColumn: Integer);
@@ -36,8 +36,8 @@ type
 
 function GridSortKind(const ACaption: string): TGridSortKind;
 function CompareGridValues(const A, B: string; AKind: TGridSortKind): Integer;
-function GridSorting(AGrid: TStringGrid): TGridSorting;
-procedure ApplyGridSorting(AGrid: TStringGrid);
+function GridSorting(AGrid: TLibraryGrid): TGridSorting;
+procedure ApplyGridSorting(AGrid: TLibraryGrid);
 
 implementation
 
@@ -45,7 +45,7 @@ uses
   LazUTF8;
 
 type
-  TSortingGridAccess = class(TStringGrid);
+  TSortingGridAccess = class(TLibraryGrid);
 
 function PlainCaption(const S: string): string;
 begin
@@ -140,7 +140,7 @@ begin
   Result := UTF8CompareText(SA, SB);
 end;
 
-constructor TGridSorting.CreateFor(AGrid: TStringGrid; AFirstCol: Integer;
+constructor TGridSorting.CreateFor(AGrid: TLibraryGrid; AFirstCol: Integer;
   AAfterSort: TNotifyEvent);
 begin
   inherited Create(AGrid);
@@ -170,13 +170,13 @@ begin
     end;
     FGrid.Cells[C, 0] := S;
     if FGrid.Columns.Enabled then
-      TSortingGridAccess(FGrid).ColumnFromGridColumn(C).Title.Caption := S;
+      TSortingGridAccess(FGrid).ColumnFromGridColumn(FGrid.PhysicalColumn(C)).Title.Caption := S;
   end;
 end;
 
 procedure TGridSorting.HeaderClick(Sender: TObject; IsColumn: Boolean; Index: Integer);
 begin
-  if IsColumn then ClickColumn(Index);
+  if IsColumn then ClickColumn(FGrid.LogicalColumn(Index));
 end;
 
 procedure TGridSorting.ClickColumn(AColumn: Integer);
@@ -321,7 +321,7 @@ begin
   if Assigned(FAfterSort) then FAfterSort(FGrid);
 end;
 
-function GridSorting(AGrid: TStringGrid): TGridSorting;
+function GridSorting(AGrid: TLibraryGrid): TGridSorting;
 var
   I: Integer;
 begin
@@ -331,7 +331,7 @@ begin
   Result := nil;
 end;
 
-procedure ApplyGridSorting(AGrid: TStringGrid);
+procedure ApplyGridSorting(AGrid: TLibraryGrid);
 var
   Sorting: TGridSorting;
 begin
