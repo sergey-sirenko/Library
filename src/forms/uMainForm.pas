@@ -8,7 +8,8 @@ uses
   uLibraryGrid, Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, ExtCtrls,
   StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs, EditBtn,
   uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons,
-  uOpenRouter, uUpdater, uBookSearch, uBookSearchHistory, uOpenRouterModels, uTwoLineCombo;
+  uOpenRouter, uUpdater, uBookSearch, uBookSearchHistory, uOpenRouterModels, uTwoLineCombo,
+  uReportFooter, uReportTotals;
 
 type
   { Owner-draw закладок: активная подпись — коричневым (LCL без OnDrawTab). }
@@ -193,6 +194,7 @@ type
     procedure btnReportSaveClick(Sender: TObject);
     procedure ReportParametersChange(Sender: TObject);
     procedure ReportFiltersResize(Sender: TObject);
+    procedure ReportViewChanged(Sender: TObject);
     procedure btnUserAddClick(Sender: TObject);
     procedure btnUserEditClick(Sender: TObject);
     procedure btnUserDeleteClick(Sender: TObject);
@@ -242,6 +244,7 @@ type
     FNormalBookDescending: Boolean;
     FReports: TReportService;
     FReportLines: TStringList;
+    FReportFooter: TReportFooter;
     FReportStatsSummary: TLoanStatisticsSummary;
     FReportStatsFrom, FReportStatsTo: TDateTime;
     FIcons: TImageList;
@@ -614,7 +617,10 @@ begin
   G.Options := G.Options - [goCellEllipsis];
   G.OnHeaderSized := @GridHeaderSized;
   G.OnPrepareCanvas := @GridPrepareCanvas;
-  G.OnSelection := @gridAnySelection;
+  if G = gridBooks then
+    G.OnSelection := @gridBooksSelection
+  else
+    G.OnSelection := @gridAnySelection;
   G.Cells[ACTIVE_MARKER_COL, 0] := '';
   G.ColWidths[ACTIVE_MARKER_COL] := ACTIVE_MARKER_WIDTH;
   for I := 0 to High(Cols) do
@@ -838,7 +844,10 @@ end;
 procedure TMainForm.GridSorted(Sender: TObject);
 begin
   if Sender = gridReport then
+  begin
     UpdateReportRowNumbers;
+    ReportViewChanged(nil);
+  end;
   RecalcGridRowHeights(Sender as TLibraryGrid);
   UpdateGridActiveMarker(Sender as TLibraryGrid);
 end;
@@ -861,7 +870,10 @@ begin
     Exit;
   end;
   if IsColumn then
+  begin
     RecalcGridRowHeights(Sender as TLibraryGrid);
+    if Sender = gridReport then ReportViewChanged(nil);
+  end;
 end;
 
 procedure TMainForm.SetupLoansGridEditing;
@@ -1383,7 +1395,6 @@ begin
   edtBookInformation.Hint := 'Поиск через настроенную нейросеть по кнопке «Найти» или Enter';
   SetupGrid(gridCopies, ['Инв. №', 'Статус', 'Место', 'Состояние', 'Удалён']);
   gridCopies.OnDblClick := @btnCopyEditClick;
-  gridBooks.OnSelection := @gridBooksSelection;
   splBooksCopies.OnMoved := @splBooksCopiesMoved;
   SetupGrid(gridReaders, ['ФИО', 'Телефон', 'Статус', 'Регистрация', 'Удалён']);
   gridReaders.OnDblClick := @btnReaderEditClick;
@@ -1413,6 +1424,10 @@ begin
   TGridSorting.CreateFor(gridReport, REPORT_FIRST_DATA_COL, @GridSorted);
   UpdateDeletedColumnVisibility;
   FReportLines := TStringList.Create;
+  FReportFooter := TReportFooter.Create(Self, gridReport);
+  FReportFooter.Parent := tsReports;
+  gridReport.OnTopLeftChanged := @ReportViewChanged;
+  gridReport.OnResize := @ReportViewChanged;
   cbReport.Items.Clear;
   cbReport.Items.Add('Каталог книг');
   cbReport.Items.Add('Экземпляры');
@@ -2233,6 +2248,7 @@ var
   C, Tmp: TControl;
   TextH, FieldH, Gap, Pad, X, Y, MaxBottom, W, GlyphW: Integer;
   Btn: TBitBtn;
+  BookControls: array[0..7] of TControl;
 begin
   if (APanel = nil) or FReflowingToolbar then
     Exit;
@@ -2243,23 +2259,39 @@ begin
   Pad := 8;
   List := TList.Create;
   try
-    for I := 0 to APanel.ControlCount - 1 do
+    if APanel = pnlBooksTop then
     begin
-      C := APanel.Controls[I];
-      if not C.Visible then
-        Continue;
-      List.Add(C);
+      // Порядок не зависит от координат после предыдущего переноса строк.
+      BookControls[0] := edtBookSearch;
+      BookControls[1] := edtBookSearchInv;
+      BookControls[2] := btnBookSearchClear;
+      BookControls[3] := btnBookAdd;
+      BookControls[4] := btnBookActions;
+      BookControls[5] := chkShowDeleted;
+      BookControls[6] := edtBookInformation;
+      BookControls[7] := btnBookSearch;
+      for C in BookControls do
+        if C.Visible then List.Add(C);
+    end
+    else
+    begin
+      for I := 0 to APanel.ControlCount - 1 do
+      begin
+        C := APanel.Controls[I];
+        if not C.Visible then Continue;
+        List.Add(C);
+      end;
+      for I := 0 to List.Count - 2 do
+        for J := I + 1 to List.Count - 1 do
+          if (TControl(List[J]).Top < TControl(List[I]).Top - 4) or
+            ((Abs(TControl(List[J]).Top - TControl(List[I]).Top) <= 4) and
+             (TControl(List[J]).Left < TControl(List[I]).Left)) then
+          begin
+            Tmp := TControl(List[I]);
+            List[I] := List[J];
+            List[J] := Tmp;
+          end;
     end;
-    for I := 0 to List.Count - 2 do
-      for J := I + 1 to List.Count - 1 do
-        if (TControl(List[J]).Top < TControl(List[I]).Top - 4) or
-          ((Abs(TControl(List[J]).Top - TControl(List[I]).Top) <= 4) and
-           (TControl(List[J]).Left < TControl(List[I]).Left)) then
-        begin
-          Tmp := TControl(List[I]);
-          List[I] := List[J];
-          List[J] := Tmp;
-        end;
 
     X := Pad;
     Y := Pad;
@@ -2477,6 +2509,7 @@ begin
   RecalcGridRowHeights(gridCategories);
   RecalcGridRowHeights(gridLocations);
   RecalcGridRowHeights(gridReport);
+  if FReportFooter <> nil then FReportFooter.UpdateTotals(FReportLines);
 end;
 
 procedure TMainForm.RefreshBackups;
@@ -3332,7 +3365,13 @@ begin
   gridReport.Configure(FDB.Paths.UserLayoutFile, LayoutKey, 1, @GridSorted);
   ApplyGridSorting(gridReport);
   UpdateGridActiveMarker(gridReport);
+  FReportFooter.UpdateTotals(FReportLines);
   btnReportSave.Enabled := True;
+end;
+
+procedure TMainForm.ReportViewChanged(Sender: TObject);
+begin
+  if FReportFooter <> nil then FReportFooter.Invalidate;
 end;
 
 procedure TMainForm.ReportFiltersResize(Sender: TObject);
@@ -3351,6 +3390,7 @@ procedure TMainForm.ReportParametersChange(Sender: TObject);
 begin
   pnlReportStats.Visible := cbReport.ItemIndex = 9;
   if FReportLines <> nil then FReportLines.Clear;
+  FReportFooter.UpdateTotals(nil);
   gridReport.BeginSchema;
   gridReport.FixedRows := 0;
   gridReport.RowCount := 1;
@@ -3423,7 +3463,7 @@ end;
 procedure TMainForm.btnReportSaveClick(Sender: TObject);
 var
   SD: TSaveDialog;
-  ExportLines: TStringList;
+  ExportLines, StatisticsLines: TStringList;
 begin
   if (FReportLines = nil) or (FReportLines.Count = 0) then
     btnReportShowClick(Sender);
@@ -3437,13 +3477,15 @@ begin
     begin
       ExportLines := nil;
       try
+        ExportLines := ReportWithTotals(FReportLines);
         if cbReport.ItemIndex = 9 then
         begin
-          ExportLines := FReports.LoansStatisticsExport(FReportLines, FReportStatsFrom,
+          StatisticsLines := FReports.LoansStatisticsExport(ExportLines, FReportStatsFrom,
             FReportStatsTo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
-          ExportLines.SaveToFile(SD.FileName);
-        end
-        else FReportLines.SaveToFile(SD.FileName);
+          ExportLines.Free;
+          ExportLines := StatisticsLines;
+        end;
+        ExportLines.SaveToFile(SD.FileName);
       except
         on E: Exception do
           MessageDlg('Не удалось сохранить отчёт: ' + E.Message, mtError, [mbOK], 0);

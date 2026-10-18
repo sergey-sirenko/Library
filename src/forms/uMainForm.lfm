@@ -49,14 +49,14 @@ object MainForm: TMainForm
           TabOrder = 1
         end
         object edtBookInformation: TSearchHistoryCombo
-          Left = 334
+          Left = 686
           Height = 28
           Top = 8
           Width = 300
-          TabOrder = 2
+          TabOrder = 5
         end
         object btnBookSearchClear: TSpeedButton
-          Left = 642
+          Left = 334
           Height = 28
           Top = 8
           Width = 24
@@ -64,40 +64,40 @@ object MainForm: TMainForm
           OnClick = btnBookSearchClearClick
         end
         object btnBookSearch: TBitBtn
-          Left = 674
+          Left = 994
           Height = 28
           Top = 8
           Width = 90
           Caption = 'Найти'
           OnClick = btnBookSearchClick
-          TabOrder = 3
+          TabOrder = 6
         end
         object btnBookAdd: TBitBtn
-          Left = 772
+          Left = 366
           Height = 28
           Top = 8
           Width = 110
           Caption = 'Добавить'
           OnClick = btnBookAddClick
-          TabOrder = 4
+          TabOrder = 2
         end
         object btnBookActions: TBitBtn
-          Left = 890
+          Left = 484
           Height = 28
           Top = 8
           Width = 110
           Caption = 'Действия'
           OnClick = btnBookActionsClick
-          TabOrder = 5
+          TabOrder = 3
         end
         object chkShowDeleted: TCheckBox
-          Left = 1008
+          Left = 602
           Height = 24
           Top = 10
           Width = 76
           Caption = 'Удалённые'
           OnChange = chkShowDeletedChange
-          TabOrder = 6
+          TabOrder = 4
         end
       end
       object gridBooks: TLibraryGrid

@@ -6,7 +6,7 @@ interface
 
 const
   APP_NAME = 'Библиотека';
-  APP_VERSION = '1.7.0';
+  APP_VERSION = '1.8.0';
   DATA_SIGNATURE = 'LIBRA001';
   INDEX_SIGNATURE = 'LIBRAIDX';
   FORMAT_VERSION = 3;
