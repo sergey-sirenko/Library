@@ -4,7 +4,7 @@ program ButtonShortcutsTests;
 
 uses
   Interfaces, Forms, Classes, SysUtils, Controls, StdCtrls, ExtCtrls,
-  ComCtrls, Grids, LCLType, uButtonShortcuts;
+  ComCtrls, Grids, Menus, LCLType, uButtonShortcuts;
 
 var
   Checks: Integer;
@@ -141,10 +141,81 @@ begin
   end;
 end;
 
+procedure TestMenuRouting;
+var
+  F: TForm;
+  Pages: TPageControl;
+  Books, Other: TTabSheet;
+  Input: TEdit;
+  Grid: TStringGrid;
+  Popup: TPopupMenu;
+  Group, EditItem, DeleteItem, CopyItem: TMenuItem;
+  Router: TButtonShortcuts;
+begin
+  F := TForm.CreateNew(nil);
+  try
+    Pages := TPageControl.Create(F);
+    Pages.Parent := F;
+    Books := TTabSheet.Create(F);
+    Books.PageControl := Pages;
+    Other := TTabSheet.Create(F);
+    Other.PageControl := Pages;
+    Pages.ActivePage := Books;
+    Input := TEdit.Create(F);
+    Input.Parent := Books;
+    Grid := TStringGrid.Create(F);
+    Grid.Parent := Books;
+    Popup := TPopupMenu.Create(F);
+    Group := TMenuItem.Create(Popup);
+    Group.Caption := 'Действия';
+    Popup.Items.Add(Group);
+    EditItem := TMenuItem.Create(Popup);
+    Group.Add(EditItem);
+    DeleteItem := TMenuItem.Create(Popup);
+    Group.Add(DeleteItem);
+    CopyItem := TMenuItem.Create(Popup);
+    Group.Add(CopyItem);
+    Router := TButtonShortcuts.ForForm(F);
+    Pages.HandleNeeded;
+    Pages.ActivePage := Books;
+    Router.BindMenu(EditItem, bsEdit, Books, []);
+    Router.BindMenu(DeleteItem, bsDelete, Books, []);
+    Router.BindMenu(CopyItem, bsCopy, Books, []);
+    Check(Router.ResolveCommand(Grid, VK_F2, []) = EditItem, 'F2 находит пункт меню');
+    Check(Router.ResolveCommand(Grid, VK_F9, []) = CopyItem, 'F9 находит пункт копирования');
+    Check(Router.ResolveCommand(Input, VK_F9, []) = CopyItem, 'F9 работает из поискового поля');
+    Check(Router.ResolveCommand(Grid, VK_DELETE, []) = DeleteItem, 'Del работает для меню в таблице');
+    Check(Router.ResolveCommand(Input, VK_DELETE, []) = nil, 'Del в поле ввода не запускает пункт меню');
+    Check(Router.ResolveCommand(Grid, VK_F9, [ssCtrl]) = nil, 'Модификаторы меню проверяются точно');
+    EditItem.Enabled := False;
+    Check(Router.ResolveCommand(Grid, VK_F2, []) = nil, 'Недоступный пункт меню не запускается');
+    EditItem.Enabled := True;
+    Group.Enabled := False;
+    Check(Router.ResolveCommand(Grid, VK_F9, []) = nil, 'Учитывается доступность родительского меню');
+    Group.Enabled := True;
+    CopyItem.Visible := False;
+    Check(Router.ResolveCommand(Grid, VK_F9, []) = nil, 'Скрытый пункт меню не запускается');
+    CopyItem.Visible := True;
+    Books.Enabled := False;
+    Check(Router.ResolveCommand(Grid, VK_F9, []) = nil, 'Недоступная область действия блокирует меню');
+    Books.Enabled := True;
+    Pages.ActivePage := Other;
+    Check(Router.ResolveCommand(Other, VK_F9, []) = nil, 'Меню действует только на вкладке книг');
+    Pages.ActivePage := Books;
+    CopyItem.Free;
+    Check(Router.ResolveCommand(Grid, VK_F9, []) = nil, 'Удалённый пункт меню не используется');
+    Books.Free;
+    Check(Router.ResolveCommand(Other, VK_F2, []) = nil, 'Удалённая область действия не используется');
+  finally
+    F.Free;
+  end;
+end;
+
 begin
   Application.Initialize;
   try
     TestRouting;
+    TestMenuRouting;
     WriteLn('OK: ', Checks, ' checks');
   except
     on E: Exception do

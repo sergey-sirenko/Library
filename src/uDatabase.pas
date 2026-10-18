@@ -1033,7 +1033,10 @@ end;
 
 procedure TLibraryDB.SetDefaultOpenRouterFavoriteModels;
 const
-  DEFAULT_MODELS: array[0..7] of string = (
+  DEFAULT_MODELS: array[0..10] of string = (
+    'anthropic/claude-sonnet-5.5',
+    'anthropic/claude-opus-5.5',
+    'google/gemini-3.8-flash',
     'google/gemini-3.6-flash',
     'google/gemini-3.1-flash-lite',
     'google/gemini-3.7-flash',
@@ -3254,7 +3257,7 @@ procedure TLibraryDB.SearchBooks(const ATitleQuery: string;
   const AInventoryQuery: string; AOut: TList; AIncludeDeleted: Boolean);
 var
   TitleQ, ISBNQ, InvQ: string;
-  IDs, CopyIDs: TList;
+  IDs, CopyIDs, TextBooks, InventoryBooks: TList;
   I: Integer;
   B: TBook;
   C: TCopy;
@@ -3277,6 +3280,8 @@ begin
 
   IDs := TList.Create;
   CopyIDs := TList.Create;
+  TextBooks := TList.Create;
+  InventoryBooks := TList.Create;
   try
     { 1) поиск по текстовым полям книги (название, автор, ISBN) }
     if TitleQ <> '' then
@@ -3287,7 +3292,7 @@ begin
         B := FindBook(TId(IDs[I]));
         if B = nil then Continue;
         if B.Deleted and (not AIncludeDeleted) then Continue;
-        if AOut.IndexOf(B) < 0 then AOut.Add(B);
+        if TextBooks.IndexOf(B) < 0 then TextBooks.Add(B);
       end;
       for I := 0 to FBooks.Count - 1 do
         begin
@@ -3299,7 +3304,7 @@ begin
               ((Pos(NormalizeKey(TitleQ), NormalizeKey(B.Title)) > 0) or
                (Pos(NormalizeKey(TitleQ), NormalizeKey(B.Authors)) > 0))) then
             Continue;
-          if AOut.IndexOf(B) < 0 then AOut.Add(B);
+          if TextBooks.IndexOf(B) < 0 then TextBooks.Add(B);
         end;
     end;
 
@@ -3320,7 +3325,7 @@ begin
         B := FindBook(C.BookID);
         if B = nil then Continue;
         if B.Deleted and (not AIncludeDeleted) then Continue;
-        if AOut.IndexOf(B) < 0 then AOut.Add(B);
+        if InventoryBooks.IndexOf(B) < 0 then InventoryBooks.Add(B);
       end;
       if AIncludeDeleted then
         for I := 0 to FCopies.Count - 1 do
@@ -3331,10 +3336,21 @@ begin
             UnicodeLowerCase(UnicodeString(InvQ)) then Continue;
           B := FindBook(C.BookID);
           if B = nil then Continue;
-          if AOut.IndexOf(B) < 0 then AOut.Add(B);
+          if InventoryBooks.IndexOf(B) < 0 then InventoryBooks.Add(B);
         end;
     end;
+    { Все заполненные поля ограничивают один и тот же набор книг. }
+    for I := 0 to FBooks.Count - 1 do
+    begin
+      B := TBook(FBooks[I]);
+      if B.Deleted and not AIncludeDeleted then Continue;
+      if (TitleQ <> '') and (TextBooks.IndexOf(B) < 0) then Continue;
+      if (InvQ <> '') and (InventoryBooks.IndexOf(B) < 0) then Continue;
+      if AOut.IndexOf(B) < 0 then AOut.Add(B);
+    end;
   finally
+    InventoryBooks.Free;
+    TextBooks.Free;
     CopyIDs.Free;
     IDs.Free;
   end;

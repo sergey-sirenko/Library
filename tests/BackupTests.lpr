@@ -84,6 +84,8 @@ begin
     Check(DB.Open(Err), 'тестовая база открыта: ' + Err);
     WriteText(DB.Paths.CoversDir + 'cover.jpg', 'cover-original');
     WriteText(DB.Paths.DataDir + 'ignored.tmp', 'temporary');
+    WriteText(DB.Paths.DataDir + 'BookSearchHistory-1.json',
+      '{"version":1,"user_id":1,"entries":[]}');
     Check(DB.CreateBackup(BackupPath, Err), 'полная копия создана: ' + Err);
     Check(FileExists(BackupPath + 'Library.exe'), 'сохранён Library.exe');
     Check(FileExists(BackupPath + 'LibraryUpdater.exe'), 'сохранён LibraryUpdater.exe');
@@ -91,6 +93,8 @@ begin
     Check(FileExists(BackupPath + 'RESTORE.txt'), 'создана инструкция восстановления');
     Check(FileExists(BackupPath + 'Covers' + PathDelim + 'cover.jpg'),
       'сохранена обложка');
+    Check(FileExists(BackupPath + 'Data' + PathDelim + 'BookSearchHistory-1.json'),
+      'история поиска включена в полную копию');
     Check(not FileExists(BackupPath + 'Data' + PathDelim + 'ignored.tmp'),
       'временный файл Data исключён');
     Check(Pos('BackupFormatVersion=2', ReadText(BackupPath + 'manifest.txt')) > 0,
@@ -99,6 +103,7 @@ begin
     WriteText(DB.Paths.CoversDir + 'cover.jpg', 'cover-changed');
     WriteText(DB.Paths.CoversDir + 'extra.jpg', 'extra');
     WriteText(DB.Paths.GridLayoutFile, 'grid-changed');
+    WriteText(DB.Paths.DataDir + 'BookSearchHistory-1.json', 'changed-history');
     BackupCountBefore := CountDirectories(DB.Paths.BackupDir);
     Check(DB.RestoreBackup(BackupPath, Err), 'полная копия восстановлена: ' + Err);
     Check(Pos('cover-original', ReadText(DB.Paths.CoversDir + 'cover.jpg')) > 0,
@@ -107,6 +112,8 @@ begin
       'лишняя обложка удалена');
     Check(Pos('grid-original', ReadText(DB.Paths.GridLayoutFile)) > 0,
       'раскладка восстановлена');
+    Check(Pos('"entries":[]', ReadText(DB.Paths.DataDir + 'BookSearchHistory-1.json')) > 0,
+      'история поиска восстановлена из копии');
     BackupCountAfter := 0;
     SafetyName := '';
     if FindFirst(DB.Paths.BackupDir + '*', faDirectory, SR) = 0 then

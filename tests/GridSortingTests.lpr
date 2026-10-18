@@ -53,6 +53,48 @@ begin
     gskInventoryRange) < 0, 'Большие номера сравниваются без потери точности');
   Check(GridSortKind('Дата регистрации') = gskDate, 'Тип даты отчёта');
   Check(GridSortKind('Дней просрочки') = gskNumber, 'Тип числа отчёта');
+  Check(GridSortKind('Выдач') = gskNumber, 'Числовое количество выдач');
+  Check(GridSortKind('Книг') = gskNumber, 'Числовое количество книг');
+  Check(GridSortKind('Читателей') = gskNumber, 'Числовое количество читателей');
+end;
+
+procedure TestLoanStatisticsSorting;
+var G: TLibraryGrid; S: TGridSorting;
+begin
+  G := TLibraryGrid.Create(nil);
+  try
+    G.FixedCols := 0;
+    G.ColCount := 4;
+    G.RowCount := 3;
+    G.FixedRows := 1;
+    G.Cells[1, 0] := 'Книга';
+    G.Cells[2, 0] := 'Выдач';
+    G.Cells[3, 0] := 'Читателей';
+    G.Cells[1, 1] := 'Азбука';
+    G.Cells[2, 1] := '2';
+    G.Cells[3, 1] := '2';
+    G.Cells[1, 2] := 'Язык';
+    G.Cells[2, 2] := '10';
+    G.Cells[3, 2] := '10';
+    S := TGridSorting.CreateFor(G, 1, nil);
+    ApplyGridSorting(G);
+    Check((S.Column = 2) and S.Descending, 'Статистика сначала упорядочена по числу выдач убывающе');
+    Check(G.Cells[1, 1] = 'Язык', '10 выдач популярнее 2 без текстового сравнения');
+    S.ClickColumn(2);
+    Check(G.Cells[1, 1] = 'Азбука', 'Ручная смена направления в статистике');
+    ApplyGridSorting(G);
+    Check(not S.Descending, 'Повторное формирование той же схемы сохраняет сортировку');
+    S.ClickColumn(3);
+    Check(G.Cells[3, 1] = '2', 'Читатели сортируются численно');
+    G.Cells[1, 0] := 'Категория';
+    ApplyGridSorting(G);
+    Check((S.Column = 2) and S.Descending, 'Смена представления возвращает начальный порядок выдач');
+    G.Cells[1, 0] := 'Книга';
+    G.Cells[2, 0] := 'Автор';
+    G.Cells[3, 0] := 'Год';
+    ApplyGridSorting(G);
+    Check((S.Column = 1) and not S.Descending, 'Другие отчёты сохраняют начальный порядок по книге');
+  finally G.Free; end;
 end;
 
 procedure TestRows;
@@ -335,6 +377,18 @@ begin
         Check(H.LogicalColumn(1) = 2, 'Порядок восстановлен из файла');
         Check(H.ColWidths[2] = 115, 'Ширина восстановлена из файла');
         Check((not H.FieldVisible(3)) and (H.ColWidths[3] = 0), 'Видимость восстановлена из файла');
+        H.BeginSchema;
+        Fill(H);
+        H.Configure(FileName, 'User.1.BooksAISearch', 1);
+        Check((H.LogicalColumn(1) = 1) and H.FieldVisible(3),
+          'Подборка нейросети использует отдельную раскладку');
+        H.MoveField(3, 1);
+        H.SaveLayout;
+        H.BeginSchema;
+        Fill(H);
+        H.Configure(FileName, 'User.1.Books', 1);
+        Check((H.LogicalColumn(1) = 2) and not H.FieldVisible(3),
+          'Возврат из подборки восстанавливает раскладку каталога');
         SL.LoadFromFile(FileName);
         Check(SL.Values['Unrelated'] = 'keep', 'Чужие настройки сохранены');
         H.BeginSchema;
@@ -378,11 +432,57 @@ begin
   end;
 end;
 
+procedure TestBookSearchRanking;
+var
+  G: TLibraryGrid;
+  Sorting: TGridSorting;
+  First, Second, Tenth: TObject;
+begin
+  G := TLibraryGrid.Create(nil);
+  First := TObject.Create;
+  Second := TObject.Create;
+  Tenth := TObject.Create;
+  try
+    G.FixedCols := 0;
+    G.ColCount := 4;
+    G.RowCount := 4;
+    G.FixedRows := 1;
+    G.Cells[1, 0] := 'Место в подборке';
+    G.Cells[2, 0] := 'Название';
+    G.Cells[3, 0] := 'Обоснование';
+    G.Cells[1, 1] := '10'; G.Cells[2, 1] := 'Азбука'; G.Cells[3, 1] := 'Десятая'; G.Objects[0, 1] := Tenth;
+    G.Cells[1, 2] := '2'; G.Cells[2, 2] := 'Букварь'; G.Cells[3, 2] := 'Вторая'; G.Objects[0, 2] := Second;
+    G.Cells[1, 3] := '1'; G.Cells[2, 3] := 'Язык'; G.Cells[3, 3] := 'Первая'; G.Objects[0, 3] := First;
+    Sorting := TGridSorting.CreateFor(G, 1, nil);
+    Sorting.SortBy(1, False);
+    Check((G.Objects[0, 1] = First) and (G.Objects[0, 2] = Second) and (G.Objects[0, 3] = Tenth),
+      'Ранг нейросети сортируется численно, независимо от названия');
+    Check((G.Cells[3, 1] = 'Первая') and (G.Cells[3, 3] = 'Десятая'),
+      'Обоснования перемещаются вместе с книгами');
+    Sorting.ClickColumn(2);
+    Check((G.Objects[0, 1] = Tenth) and (G.Cells[1, 1] = '10'),
+      'Ручная сортировка сохраняет исходное место в подборке');
+    G.MoveField(1, 3);
+    Sorting.SortBy(1, False);
+    Check(G.Objects[0, 1] = First, 'Рейтинг работает после перестановки колонок');
+    Sorting.SortBy(2, True);
+    Check((Sorting.Column = 2) and Sorting.Descending and (G.Objects[0, 1] = First),
+      'Направление обычной сортировки можно восстановить');
+  finally
+    G.Free;
+    First.Free;
+    Second.Free;
+    Tenth.Free;
+  end;
+end;
+
 begin
   Application.Initialize;
   try
     TestColumnLayouts;
+    TestBookSearchRanking;
     TestValues;
+    TestLoanStatisticsSorting;
     TestRows;
     TestEditableRows;
     TestDefaultsAndPrices;

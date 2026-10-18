@@ -29,6 +29,7 @@ type
       AAfterSort: TNotifyEvent);
     procedure Apply;
     procedure ClickColumn(AColumn: Integer);
+    procedure SortBy(AColumn: Integer; ADescending: Boolean);
     property OnKey: TGridSortKeyEvent read FKey write FKey;
     property Column: Integer read FColumn;
     property Descending: Boolean read FDescending;
@@ -60,8 +61,9 @@ begin
   S := PlainCaption(ACaption);
   if S = 'Свободные номера' then
     Exit(gskInventoryRange);
-  if (S = 'Год') or (S = 'Дней') or (S = 'Дней просрочки') or
-    (S = 'Номер') or (S = 'Вход $ / 1M') or (S = 'Выход $ / 1M') then
+  if (S = 'Место в подборке') or (S = 'Год') or (S = 'Дней') or (S = 'Дней просрочки') or
+    (S = 'Номер') or (S = 'Вход $ / 1M') or (S = 'Выход $ / 1M') or
+    (S = 'Выдач') or (S = 'Книг') or (S = 'Читателей') then
     Exit(gskNumber);
   if (Pos('Дата', S) = 1) or (S = 'Регистрация') or (S = 'Выдана') or
     (S = 'Срок') or (S = 'Срок возврата') or (S = 'Возврат') then
@@ -208,6 +210,15 @@ begin
   Apply;
 end;
 
+procedure TGridSorting.SortBy(AColumn: Integer; ADescending: Boolean);
+begin
+  Apply;
+  if (AColumn < FFirstCol) or (AColumn >= FGrid.ColCount) then Exit;
+  FColumn := AColumn;
+  FDescending := ADescending;
+  Apply;
+end;
+
 procedure TGridSorting.Apply;
 type
   TRowData = record
@@ -277,6 +288,13 @@ begin
         Break;
       end;
     end;
+    for C := FFirstCol to FGrid.ColCount - 1 do
+      if PlainCaption(FGrid.Cells[C, 0]) = 'Выдач' then
+      begin
+        FColumn := C;
+        FDescending := True;
+        Break;
+      end;
   end;
   if FColumn >= FGrid.ColCount then Exit;
   Kind := GridSortKind(FGrid.Cells[FColumn, 0]);

@@ -5,7 +5,7 @@ unit uButtonShortcuts;
 interface
 
 uses
-  Classes, SysUtils, Forms, Controls, StdCtrls;
+  Classes, SysUtils, Forms, Controls, StdCtrls, Menus;
 
 type
   TButtonShortcut = (bsAdd, bsEdit, bsDelete, bsFind, bsSave, bsCancel,
@@ -16,6 +16,8 @@ type
     type
       TBinding = record
         Button: TCustomButton;
+        MenuItem: TMenuItem;
+        Context: TControl;
         Shortcut: TButtonShortcut;
         FocusScopes: array of TControl;
       end;
@@ -32,6 +34,10 @@ type
     class function ForForm(AForm: TCustomForm): TButtonShortcuts;
     procedure Bind(AButton: TCustomButton; AShortcut: TButtonShortcut;
       const AFocusScopes: array of TControl);
+    procedure BindMenu(AItem: TMenuItem; AShortcut: TButtonShortcut;
+      AContext: TControl; const AFocusScopes: array of TControl);
+    function ResolveCommand(AFocus: TControl; Key: Word;
+      Shift: TShiftState): TComponent;
     function ResolveButton(AFocus: TControl; Key: Word;
       Shift: TShiftState): TCustomButton;
   end;
@@ -131,6 +137,31 @@ begin
   FForm.Canvas.Font.Assign(FForm.Font);
 end;
 
+procedure TButtonShortcuts.BindMenu(AItem: TMenuItem;
+  AShortcut: TButtonShortcut; AContext: TControl;
+  const AFocusScopes: array of TControl);
+var
+  I, N: Integer;
+  Suffix: string;
+begin
+  N := Length(FBindings);
+  SetLength(FBindings, N + 1);
+  FBindings[N].MenuItem := AItem;
+  FBindings[N].Context := AContext;
+  FBindings[N].Shortcut := AShortcut;
+  SetLength(FBindings[N].FocusScopes, Length(AFocusScopes));
+  for I := 0 to High(AFocusScopes) do
+  begin
+    FBindings[N].FocusScopes[I] := AFocusScopes[I];
+    AFocusScopes[I].FreeNotification(Self);
+  end;
+  AItem.FreeNotification(Self);
+  AContext.FreeNotification(Self);
+  Suffix := ' (' + SHORTCUT_LABELS[AShortcut] + ')';
+  if Copy(AItem.Caption, Length(AItem.Caption) - Length(Suffix) + 1, Length(Suffix)) <> Suffix then
+    AItem.Caption := AItem.Caption + Suffix;
+end;
+
 procedure TButtonShortcuts.Notification(AComponent: TComponent;
   Operation: TOperation);
 var
@@ -141,18 +172,21 @@ begin
   for I := 0 to High(FBindings) do
   begin
     if FBindings[I].Button = AComponent then FBindings[I].Button := nil;
+    if FBindings[I].MenuItem = AComponent then FBindings[I].MenuItem := nil;
+    if FBindings[I].Context = AComponent then FBindings[I].Context := nil;
     for J := 0 to High(FBindings[I].FocusScopes) do
       if FBindings[I].FocusScopes[J] = AComponent then
         FBindings[I].FocusScopes[J] := nil;
   end;
 end;
 
-function TButtonShortcuts.ResolveButton(AFocus: TControl; Key: Word;
-  Shift: TShiftState): TCustomButton;
+function TButtonShortcuts.ResolveCommand(AFocus: TControl; Key: Word;
+  Shift: TShiftState): TComponent;
 var
-  I, J, Score, BestScore: Integer;
+  I, J, Score, BestScore, BestIndex: Integer;
   ExpectedShift: TShiftState;
   C: TControl;
+  Item: TMenuItem;
 begin
   Result := nil;
   { Не отбираем удаление текста и закрытие выпадающего списка. }
@@ -167,14 +201,19 @@ begin
     C := C.Parent;
   end;
   BestScore := -1;
+  BestIndex := -1;
   for I := 0 to High(FBindings) do
   begin
-    if (FBindings[I].Button = nil) or
+    if ((FBindings[I].Button = nil) and (FBindings[I].MenuItem = nil)) or
       (SHORTCUT_KEYS[FBindings[I].Shortcut] <> Key) then Continue;
     ExpectedShift := [];
     if FBindings[I].Shortcut in [bsSave, bsGenerate] then ExpectedShift := [ssCtrl];
     if Shift <> ExpectedShift then Continue;
-    if not AvailablePage(FBindings[I].Button, FForm) then Continue;
+    if FBindings[I].Button <> nil then
+      C := FBindings[I].Button
+    else
+      C := FBindings[I].Context;
+    if (C = nil) or not AvailablePage(C, FForm) then Continue;
     Score := 0;
     if Length(FBindings[I].FocusScopes) > 0 then
     begin
@@ -186,28 +225,60 @@ begin
     if Score > BestScore then
     begin
       BestScore := Score;
-      Result := FBindings[I].Button;
+      BestIndex := I;
+      if FBindings[I].Button <> nil then
+        Result := FBindings[I].Button
+      else
+        Result := FBindings[I].MenuItem;
     end;
   end;
   { Недоступная контекстная кнопка не должна запускать действие другого списка. }
-  if (Result <> nil) and not Result.IsEnabled then Result := nil;
+  if (Result is TCustomButton) and not TCustomButton(Result).IsEnabled then Result := nil;
+  if Result is TMenuItem then
+  begin
+    if not FBindings[BestIndex].Context.IsEnabled then
+      Result := nil;
+    Item := TMenuItem(Result);
+    while Item <> nil do
+    begin
+      if not Item.Enabled or not Item.Visible then
+      begin
+        Result := nil;
+        Break;
+      end;
+      Item := Item.Parent;
+    end;
+  end;
+end;
+
+function TButtonShortcuts.ResolveButton(AFocus: TControl; Key: Word;
+  Shift: TShiftState): TCustomButton;
+var
+  Command: TComponent;
+begin
+  Command := ResolveCommand(AFocus, Key, Shift);
+  if Command is TCustomButton then
+    Result := TCustomButton(Command)
+  else
+    Result := nil;
 end;
 
 procedure TButtonShortcuts.KeyDown(Sender: TObject; var Key: Word;
   Shift: TShiftState);
 var
-  Button: TCustomButton;
+  Command: TComponent;
 begin
   if FExecuting or (Key = 0) or (Screen.ActiveCustomForm <> FForm) or
     not FForm.Enabled or not FForm.Visible then Exit;
   if not (Sender is TControl) then Exit;
   if GetParentForm(TControl(Sender)) <> FForm then Exit;
-  Button := ResolveButton(TControl(Sender), Key, Shift);
-  if Button = nil then Exit;
+  Command := ResolveCommand(TControl(Sender), Key, Shift);
+  if Command = nil then Exit;
   Key := 0;
   FExecuting := True;
   try
-    Button.Click;
+    if Command is TCustomButton then TCustomButton(Command).Click
+    else if Command is TMenuItem then TMenuItem(Command).Click;
   finally
     FExecuting := False;
   end;

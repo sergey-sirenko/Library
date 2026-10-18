@@ -48,8 +48,15 @@ object MainForm: TMainForm
           Width = 110
           TabOrder = 1
         end
+        object edtBookInformation: TSearchHistoryCombo
+          Left = 334
+          Height = 28
+          Top = 8
+          Width = 300
+          TabOrder = 2
+        end
         object btnBookSearchClear: TSpeedButton
-          Left = 332
+          Left = 642
           Height = 28
           Top = 8
           Width = 24
@@ -57,76 +64,40 @@ object MainForm: TMainForm
           OnClick = btnBookSearchClearClick
         end
         object btnBookSearch: TBitBtn
-          Left = 362
+          Left = 674
           Height = 28
           Top = 8
           Width = 90
           Caption = 'Найти'
           OnClick = btnBookSearchClick
-          TabOrder = 2
+          TabOrder = 3
         end
         object btnBookAdd: TBitBtn
-          Left = 460
+          Left = 772
           Height = 28
           Top = 8
           Width = 110
           Caption = 'Добавить'
           OnClick = btnBookAddClick
-          TabOrder = 3
+          TabOrder = 4
         end
-        object btnBookRecognize: TBitBtn
-          Left = 1080
-          Height = 28
-          Top = 8
-          Width = 150
-          Caption = 'Распознать'
-          OnClick = btnBookRecognizeMenuClick
-          TabOrder = 8
-        end
-        object btnBookEdit: TBitBtn
-          Left = 578
+        object btnBookActions: TBitBtn
+          Left = 890
           Height = 28
           Top = 8
           Width = 110
-          Caption = 'Изменить'
-          OnClick = btnBookEditClick
-          TabOrder = 4
-        end
-        object btnBookDelete: TBitBtn
-          Left = 834
-          Height = 28
-          Top = 8
-          Width = 100
-          Caption = 'Удалить'
-          OnClick = btnBookDeleteClick
-          TabOrder = 6
-        end
-        object btnBookRestore: TBitBtn
-          Left = 942
-          Height = 28
-          Top = 8
-          Width = 130
-          Caption = 'Восстановить'
-          OnClick = btnBookRestoreClick
-          TabOrder = 7
-        end
-        object btnBookCopy: TBitBtn
-          Left = 696
-          Height = 28
-          Top = 8
-          Width = 130
-          Caption = 'Скопировать'
-          OnClick = btnBookCopyClick
+          Caption = 'Действия'
+          OnClick = btnBookActionsClick
           TabOrder = 5
         end
         object chkShowDeleted: TCheckBox
-          Left = 1376
+          Left = 1008
           Height = 24
           Top = 10
           Width = 76
           Caption = 'Удалённые'
           OnChange = chkShowDeletedChange
-          TabOrder = 10
+          TabOrder = 6
         end
       end
       object gridBooks: TLibraryGrid
@@ -566,6 +537,75 @@ object MainForm: TMainForm
           TabOrder = 2
         end
       end
+      object pnlReportStats: TPanel
+        Left = 0
+        Top = 44
+        Width = 1016
+        Height = 120
+        Align = alTop
+        BevelOuter = bvNone
+        Visible = False
+        TabOrder = 2
+        object pnlReportFilters: TPanel
+          Left = 0
+          Top = 0
+          Width = 1016
+          Height = 44
+          Align = alTop
+          BevelOuter = bvNone
+          TabOrder = 0
+          object lblReportFrom: TLabel
+            Left = 8
+            Top = 8
+            Width = 40
+            Height = 28
+            Caption = 'С:'
+            FocusControl = edtReportFrom
+          end
+          object edtReportFrom: TDateEdit
+            Left = 56
+            Top = 8
+            Width = 150
+            Height = 28
+            TabOrder = 0
+          end
+          object lblReportTo: TLabel
+            Left = 214
+            Top = 8
+            Width = 40
+            Height = 28
+            Caption = 'По:'
+            FocusControl = edtReportTo
+          end
+          object edtReportTo: TDateEdit
+            Left = 262
+            Top = 8
+            Width = 150
+            Height = 28
+            TabOrder = 1
+          end
+          object cbReportStatsView: TComboBox
+            Left = 420
+            Top = 8
+            Width = 200
+            Height = 28
+            Style = csDropDownList
+            TabOrder = 2
+          end
+        end
+        object lblReportSummary: TLabel
+          Left = 8
+          Top = 44
+          Width = 1000
+          Height = 76
+          Align = alClient
+          BorderSpacing.Left = 8
+          BorderSpacing.Right = 8
+          AutoSize = False
+          WordWrap = True
+          Caption = 'Укажите период и нажмите «Сформировать». Категория учитывается текущая.'
+        end
+      end
       object gridReport: TLibraryGrid
         Left = 0
         Height = 542
@@ -764,7 +804,7 @@ object MainForm: TMainForm
           Width = 160
           Caption = 'Модель OpenRouter'
         end
-        object cbOpenRouterModel: TComboBox
+        object cbOpenRouterModel: TTwoLineCombo
           Left = 24
           Height = 28
           Top = 280
@@ -773,6 +813,15 @@ object MainForm: TMainForm
           ShowHint = True
           Style = csDropDown
           TabOrder = 9
+        end
+        object lblModelPrice: TLabel
+          Left = 24
+          Top = 312
+          Width = 400
+          Height = 50
+          AutoSize = False
+          WordWrap = True
+          Caption = 'Цена неизвестна'
         end
         object btnSelectOpenRouterModel: TBitBtn
           Left = 24
@@ -933,16 +982,38 @@ object MainForm: TMainForm
     Panels = <>
     SimplePanel = True
   end
-  object pmBookRecognize: TPopupMenu
-    left = 760
-    top = 604
-    object miBookRecognizeImage: TMenuItem
-      Caption = 'Изображения'
-      OnClick = btnBookRecognizeClick
+  object pmBookActions: TPopupMenu
+    OnPopup = BookActionsPopup
+    object miBookEdit: TMenuItem
+      Caption = 'Изменить'
+      OnClick = btnBookEditClick
     end
-    object miBookRecognizeText: TMenuItem
-      Caption = 'Текст'
-      OnClick = btnBookRecognizeTextClick
+    object miBookCopy: TMenuItem
+      Caption = 'Скопировать'
+      OnClick = btnBookCopyClick
+    end
+    object miBookDelete: TMenuItem
+      Caption = 'Удалить'
+      OnClick = btnBookDeleteClick
+    end
+    object miBookRestore: TMenuItem
+      Caption = 'Восстановить'
+      OnClick = btnBookRestoreClick
+    end
+    object miClearBookSearchHistory: TMenuItem
+      Caption = 'Очистить историю поиска…'
+      OnClick = ClearBookSearchHistoryClick
+    end
+    object miBookRecognize: TMenuItem
+      Caption = 'Распознать'
+      object miBookRecognizeImage: TMenuItem
+        Caption = 'Изображения'
+        OnClick = btnBookRecognizeClick
+      end
+      object miBookRecognizeText: TMenuItem
+        Caption = 'Текст'
+        OnClick = btnBookRecognizeTextClick
+      end
     end
   end
 end

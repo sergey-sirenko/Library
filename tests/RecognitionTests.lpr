@@ -694,6 +694,14 @@ begin
       DB.SearchBooks('удалённая', '802', Results, True);
       Check(Results.Count = 1,
         'совпадение по двум полям не добавляет книгу повторно');
+      Results.Clear;
+      DB.SearchBooks('пушкин', '802', Results, True);
+      Check(Results.Count = 0, 'название/автор и инвентарный номер объединяются по И');
+      DB.SearchBooks('несуществующая', '802', Results, True);
+      Check(Results.Count = 0, 'инвентарный номер не отменяет несовпадение текстового поля');
+      DB.SearchBooks('тОлС', '802', Results, True);
+      Check((Results.Count = 1) and (TBook(Results[0]) = DeletedBook),
+        'оба поля одновременно находят одну книгу с учётом регистра');
     finally
       Results.Free;
     end;

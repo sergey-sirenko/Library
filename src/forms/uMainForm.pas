@@ -6,9 +6,9 @@ interface
 
 uses
   uLibraryGrid, Classes, SysUtils, Forms, Controls, Graphics, Dialogs, ComCtrls, ExtCtrls,
-  StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs,
+  StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs, EditBtn,
   uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons,
-  uOpenRouter, uUpdater;
+  uOpenRouter, uUpdater, uBookSearch, uBookSearchHistory, uOpenRouterModels, uTwoLineCombo;
 
 type
   { Owner-draw закладок: активная подпись — коричневым (LCL без OnDrawTab). }
@@ -25,6 +25,15 @@ type
     procedure SetPlaceholder(const Value: string);
   published
     property Placeholder: string read FPlaceholder write SetPlaceholder;
+  end;
+
+  TSearchHistoryCombo = class(TTwoLineCombo)
+  private
+    FHistoryReturn: Boolean;
+  protected
+    procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    procedure KeyPress(var Key: Char); override;
+    procedure KeyUp(var Key: Word; Shift: TShiftState); override;
   end;
 
   TMainForm = class(TForm)
@@ -48,14 +57,13 @@ type
     btnBookSearchClear: TSpeedButton;
     btnBookSearch: TBitBtn;
     btnBookAdd: TBitBtn;
-    btnBookCopy: TBitBtn;
-    btnBookRecognize: TBitBtn;
-    pmBookRecognize: TPopupMenu;
+    edtBookInformation: TSearchHistoryCombo;
+    btnBookActions: TBitBtn;
+    pmBookActions: TPopupMenu;
+    miBookEdit, miBookCopy, miBookDelete, miBookRestore, miBookRecognize: TMenuItem;
     miBookRecognizeImage: TMenuItem;
     miBookRecognizeText: TMenuItem;
-    btnBookEdit: TBitBtn;
-    btnBookDelete: TBitBtn;
-    btnBookRestore: TBitBtn;
+    miClearBookSearchHistory: TMenuItem;
     btnCopyAdd: TBitBtn;
     chkShowDeleted: TCheckBox;
     chkShowDeletedCopies: TCheckBox;
@@ -86,6 +94,10 @@ type
     gridOverdue: TLibraryGrid;
     pnlReports: TPanel;
     cbReport: TComboBox;
+    pnlReportStats, pnlReportFilters: TPanel;
+    lblReportFrom, lblReportTo, lblReportSummary: TLabel;
+    edtReportFrom, edtReportTo: TDateEdit;
+    cbReportStatsView: TComboBox;
     btnReportShow: TBitBtn;
     btnReportSave: TBitBtn;
     gridReport: TLibraryGrid;
@@ -107,7 +119,8 @@ type
     lblInventoryStart: TLabel;
     seInventoryStart: TSpinEdit;
     lblOpenRouterModel: TLabel;
-    cbOpenRouterModel: TComboBox;
+    cbOpenRouterModel: TTwoLineCombo;
+    lblModelPrice: TLabel;
     btnSelectOpenRouterModel: TBitBtn;
     lblOpenRouterApiKey: TLabel;
     edtOpenRouterApiKey: TEdit;
@@ -139,6 +152,13 @@ type
     chkShowDeletedLocations: TCheckBox;
     gridLocations: TLibraryGrid;
     statusBar: TStatusBar;
+    procedure ModelComboDraw(Sender: TWinControl; Index: Integer; ARect: TRect; State: TOwnerDrawState);
+    procedure ModelComboDropDown(Sender: TObject);
+    procedure ModelComboChange(Sender: TObject);
+    procedure HistoryComboDraw(Sender: TWinControl; Index: Integer; ARect: TRect; State: TOwnerDrawState);
+    procedure HistoryComboSelect(Sender: TObject);
+    procedure HistoryComboDropDown(Sender: TObject);
+    procedure ClearBookSearchHistoryClick(Sender: TObject);
     procedure FormCreate(Sender: TObject);
     procedure FormClose(Sender: TObject; var CloseAction: TCloseAction);
     procedure FormShow(Sender: TObject);
@@ -149,7 +169,8 @@ type
     procedure edtBookSearchInvKeyPress(Sender: TObject; var Key: char);
     procedure btnBookAddClick(Sender: TObject);
     procedure btnBookCopyClick(Sender: TObject);
-    procedure btnBookRecognizeMenuClick(Sender: TObject);
+    procedure btnBookActionsClick(Sender: TObject);
+    procedure BookActionsPopup(Sender: TObject);
     procedure btnBookRecognizeClick(Sender: TObject);
     procedure btnBookRecognizeTextClick(Sender: TObject);
     procedure btnBookEditClick(Sender: TObject);
@@ -170,6 +191,8 @@ type
     procedure btnLoanDateClick(Sender: TObject);
     procedure btnReportShowClick(Sender: TObject);
     procedure btnReportSaveClick(Sender: TObject);
+    procedure ReportParametersChange(Sender: TObject);
+    procedure ReportFiltersResize(Sender: TObject);
     procedure btnUserAddClick(Sender: TObject);
     procedure btnUserEditClick(Sender: TObject);
     procedure btnUserDeleteClick(Sender: TObject);
@@ -208,14 +231,27 @@ type
   private
     FDB: TLibraryDB;
     FReflowingToolbar: Boolean;
+    FBookSearch: TBookSearchState;
+    FSearchHistory: TBookSearchHistory;
+    FHistoryUpdating: Boolean;
+    FPriceModels: TModelInfoArray;
+    FPriceUpdatedAt: TDateTime;
+    FPriceAttempted: Boolean;
+    FBookAISchema, FBookSearchRunning: Boolean;
+    FNormalBookSort: Integer;
+    FNormalBookDescending: Boolean;
     FReports: TReportService;
     FReportLines: TStringList;
+    FReportStatsSummary: TLoanStatisticsSummary;
+    FReportStatsFrom, FReportStatsTo: TDateTime;
     FIcons: TImageList;
     FLoanIssuedCol: Integer;
     FLoanDueCol: Integer;
     FDeletedColumnWidths: array[0..5] of Integer;
     procedure RefreshAll;
     procedure RefreshBooks;
+    procedure RenderBooks(AResetRank: Boolean = False);
+    procedure SetBookSchema(AForAI: Boolean);
     procedure RefreshCopies;
     procedure RefreshReaders;
     procedure RefreshLoans;
@@ -224,6 +260,10 @@ type
     procedure RefreshSettings;
     procedure SetOpenRouterModel(const AModel: string);
     procedure RefreshOpenRouterModelList;
+    procedure UpdateModelPrice;
+    function ModelPriceCacheFile: string;
+    procedure ReloadSearchHistory;
+    procedure RefreshSearchHistoryItems;
     procedure RefreshBackups;
     procedure RefreshJournal;
     procedure RefreshCategories;
@@ -285,7 +325,7 @@ implementation
 {$R *.lfm}
 
 uses
-  FileUtil, LazFileUtils, StrUtils, Math, LCLIntf, uGridSorting, uButtonShortcuts;
+  FileUtil, LazFileUtils, StrUtils, Math, DateUtils, LCLIntf, uGridSorting, uButtonShortcuts;
 
 const
   MIN_BOOK_COPY_PANEL_HEIGHT = 120;
@@ -314,6 +354,71 @@ type
     procedure Finish;
     property Cancelled: Boolean read FCancelled;
   end;
+
+type
+  TBookSearchThread = class(TThread)
+  private
+    FSnapshot: TBookSearchSnapshot;
+    FModel, FKey: string;
+  protected
+    procedure Execute; override;
+  public
+    Success: Boolean;
+    Response: TBookSearchResponse;
+    ErrorText: string;
+    constructor Create(ASnapshot: TBookSearchSnapshot; const AModel, AKey: string);
+  end;
+
+procedure TSearchHistoryCombo.KeyDown(var Key: Word; Shift: TShiftState);
+begin
+  // LCL закрывает список до OnKeyDown; проверяем его состояние до inherited.
+  FHistoryReturn := (Key = VK_RETURN) and DroppedDown;
+  if FHistoryReturn then
+  begin
+    DroppedDown := False;
+    Select;
+    Key := VK_UNKNOWN;
+    Exit;
+  end;
+  inherited KeyDown(Key, Shift);
+end;
+
+procedure TSearchHistoryCombo.KeyPress(var Key: Char);
+begin
+  if FHistoryReturn and (Key = #13) then
+  begin
+    Key := #0;
+    Exit;
+  end;
+  inherited KeyPress(Key);
+end;
+
+procedure TSearchHistoryCombo.KeyUp(var Key: Word; Shift: TShiftState);
+begin
+  if Key = VK_RETURN then FHistoryReturn := False;
+  inherited KeyUp(Key, Shift);
+end;
+
+constructor TBookSearchThread.Create(ASnapshot: TBookSearchSnapshot;
+  const AModel, AKey: string);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FSnapshot := ASnapshot;
+  FModel := AModel;
+  FKey := AKey;
+end;
+
+procedure TBookSearchThread.Execute;
+begin
+  try
+    Success := SearchBookInformation(FSnapshot, FModel, FKey, Response, ErrorText);
+  except
+    Success := False;
+    ErrorText := 'Не удалось выполнить поиск через нейросеть.';
+  end;
+  FKey := '';
+end;
 
 constructor TUpdateProgressForm.Create(AOwner: TComponent);
 begin
@@ -817,7 +922,8 @@ begin
     try
       if FileExists(Fn) then
         SL.LoadFromFile(Fn);
-      SaveOne(gridBooks, 'Books');
+      if FBookAISchema then SaveOne(gridBooks, 'BooksAISearch')
+      else SaveOne(gridBooks, 'Books');
       SaveOne(gridCopies, 'Copies');
       SaveOne(gridReaders, 'Readers');
       SaveOne(gridLoans, 'LoansCategory');
@@ -1224,6 +1330,8 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  FBookSearch := TBookSearchState.Create;
+  FNormalBookSort := DATA_FIRST_COL;
   Caption := ApplicationWindowTitle('');
   WindowState := wsMaximized;
   pcMain.OwnerDraw := True;
@@ -1231,9 +1339,9 @@ begin
     RecreateWnd(pcMain);
   SetupUIIcons;
   BindButtonShortcut(btnBookAdd, bsAdd);
-  BindButtonShortcut(btnBookCopy, bsCopy);
-  BindButtonShortcut(btnBookEdit, bsEdit);
-  BindButtonShortcut(btnBookDelete, bsDelete);
+  TButtonShortcuts.ForForm(Self).BindMenu(miBookCopy, bsCopy, tsBooks, []);
+  TButtonShortcuts.ForForm(Self).BindMenu(miBookEdit, bsEdit, tsBooks, []);
+  TButtonShortcuts.ForForm(Self).BindMenu(miBookDelete, bsDelete, tsBooks, []);
   BindButtonShortcut(btnReaderAdd, bsAdd);
   BindButtonShortcut(btnReaderEdit, bsEdit);
   BindButtonShortcut(btnReaderDelete, bsDelete);
@@ -1260,6 +1368,19 @@ begin
   edtBookSearch.Placeholder := 'Название, автор или ISBN';
   edtBookSearchInv.Placeholder := 'По инв. №';
   edtBookSearchInv.OnKeyPress := @edtBookSearchInvKeyPress;
+  edtBookSearch.OnKeyPress := @edtBookSearchInvKeyPress;
+  edtBookInformation.OnKeyPress := @edtBookSearchInvKeyPress;
+  edtBookInformation.TextHint := 'Какую информацию найти в книгах';
+  edtBookInformation.Style := csOwnerDrawEditableFixed;
+  edtBookInformation.OnDrawItem := @HistoryComboDraw;
+  edtBookInformation.OnSelect := @HistoryComboSelect;
+  edtBookInformation.OnDropDown := @HistoryComboDropDown;
+  cbOpenRouterModel.Style := csOwnerDrawEditableFixed;
+  cbOpenRouterModel.OnDrawItem := @ModelComboDraw;
+  cbOpenRouterModel.OnDropDown := @ModelComboDropDown;
+  cbOpenRouterModel.OnChange := @ModelComboChange;
+  cbOpenRouterModel.OnSelect := @ModelComboChange;
+  edtBookInformation.Hint := 'Поиск через настроенную нейросеть по кнопке «Найти» или Enter';
   SetupGrid(gridCopies, ['Инв. №', 'Статус', 'Место', 'Состояние', 'Удалён']);
   gridCopies.OnDblClick := @btnCopyEditClick;
   gridBooks.OnSelection := @gridBooksSelection;
@@ -1302,7 +1423,21 @@ begin
   cbReport.Items.Add('История выдач');
   cbReport.Items.Add('Список читателей');
   cbReport.Items.Add('Журнал действий');
+  cbReport.Items.Add('Статистика выдач');
   cbReport.ItemIndex := 0;
+  cbReportStatsView.Items.Add('По книгам');
+  cbReportStatsView.Items.Add('По категориям');
+  cbReportStatsView.ItemIndex := 0;
+  edtReportFrom.DateFormat := 'dd.mm.yyyy';
+  edtReportTo.DateFormat := 'dd.mm.yyyy';
+  edtReportFrom.Date := StartOfTheMonth(Date);
+  edtReportTo.Date := Date;
+  cbReport.OnChange := @ReportParametersChange;
+  cbReportStatsView.OnChange := @ReportParametersChange;
+  edtReportFrom.OnChange := @ReportParametersChange;
+  edtReportTo.OnChange := @ReportParametersChange;
+  pnlReportFilters.OnResize := @ReportFiltersResize;
+  btnReportSave.Enabled := False;
   pnlBooksTop.OnResize := @ToolbarResize;
   pnlCopiesTop.OnResize := @ToolbarResize;
   pnlReadersTop.OnResize := @ToolbarResize;
@@ -1353,11 +1488,7 @@ begin
 
   ApplyButtonIcon(btnBookSearch, icoSearch);
   ApplyButtonIcon(btnBookAdd, icoAdd);
-  ApplyButtonIcon(btnBookCopy, icoAdd);
-  ApplyButtonIcon(btnBookRecognize, icoRun);
-  ApplyButtonIcon(btnBookEdit, icoEdit);
-  ApplyButtonIcon(btnBookDelete, icoDelete);
-  ApplyButtonIcon(btnBookRestore, icoRestore);
+  ApplyButtonIcon(btnBookActions, icoRun);
   ApplyButtonIcon(btnCopyAdd, icoAdd);
   ApplyButtonIcon(btnCopyEdit, icoEdit);
   ApplyButtonIcon(btnCopyDelete, icoDelete);
@@ -1396,14 +1527,25 @@ begin
   ApplyButtonIcon(btnRestoreBackup, icoRestore);
 end;
 
-procedure TMainForm.btnBookRecognizeMenuClick(Sender: TObject);
+procedure TMainForm.btnBookActionsClick(Sender: TObject);
 var
   P: TPoint;
 begin
-  if (pmBookRecognize = nil) or (btnBookRecognize = nil) then
-    Exit;
-  P := btnBookRecognize.ClientToScreen(Point(0, btnBookRecognize.Height));
-  pmBookRecognize.Popup(P.X, P.Y);
+  P := btnBookActions.ClientToScreen(Point(0, btnBookActions.Height));
+  pmBookActions.Popup(P.X, P.Y);
+end;
+
+procedure TMainForm.BookActionsPopup(Sender: TObject);
+var
+  B: TBook;
+begin
+  B := SelectedBook;
+  miBookEdit.Enabled := B <> nil;
+  miBookCopy.Enabled := B <> nil;
+  miBookDelete.Enabled := (B <> nil) and not B.Deleted;
+  miBookRestore.Enabled := (B <> nil) and B.Deleted;
+  miClearBookSearchHistory.Enabled := (FSearchHistory <> nil) and
+    ((FSearchHistory.Count > 0) or not FSearchHistory.Writable);
 end;
 
 procedure TMainForm.ApplyLibraryTitle;
@@ -1440,6 +1582,7 @@ procedure TMainForm.gridBooksSelection(Sender: TObject; aCol, aRow: Integer);
 begin
   UpdateGridActiveMarker(Sender as TLibraryGrid);
   RefreshCopies;
+  BookActionsPopup(nil);
 end;
 
 procedure TMainForm.gridAnySelection(Sender: TObject; aCol, aRow: Integer);
@@ -1464,6 +1607,8 @@ end;
 procedure TMainForm.FormShow(Sender: TObject);
 begin
   FReports := TReportService.Create(FDB);
+  LoadModelPriceCache(ModelPriceCacheFile, FPriceModels, FPriceUpdatedAt);
+  ReloadSearchHistory;
   ApplyUIFontSize;
   ApplyRoleUI;
   LoadGridLayouts;
@@ -1478,6 +1623,7 @@ begin
   gridJournal.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Journal', 1, @GridSorted);
   edtBookSearch.OnChange := @edtBookSearchChange;
   edtBookSearchInv.OnChange := @edtBookSearchInvChange;
+  edtBookInformation.OnChange := @edtBookSearchChange;
   ClampBooksCopiesPanelHeight;
   RefreshAll;
   ApplyLibraryTitle;
@@ -1497,6 +1643,8 @@ begin
     else if Err <> '' then
       MessageDlg(Err, mtWarning, [mbOK], 0);
   end;
+  FreeAndNil(FSearchHistory);
+  FreeAndNil(FBookSearch);
   FreeAndNil(FReports);
   FreeAndNil(FReportLines);
 end;
@@ -1528,19 +1676,68 @@ end;
 
 procedure TMainForm.RefreshBooks;
 var
+  WasActive: Boolean;
+begin
+  WasActive := FBookSearch.Active;
+  FBookSearch.Clear;
+  RenderBooks;
+  if WasActive or (Trim(edtBookInformation.Text) <> '') then
+    statusBar.SimpleText := 'Подборка сброшена. Для поиска информации нажмите «Найти».';
+end;
+
+procedure TMainForm.SetBookSchema(AForAI: Boolean);
+var
+  LayoutName: string;
+begin
+  if FBookAISchema = AForAI then Exit;
+  if AForAI then
+  begin
+    FNormalBookSort := GridSorting(gridBooks).Column;
+    FNormalBookDescending := GridSorting(gridBooks).Descending;
+  end;
+  gridBooks.BeginSchema;
+  if AForAI then
+  begin
+    SetupGrid(gridBooks, ['Место в подборке', 'Название', 'Автор', 'Издательство',
+      'Категория', 'Год', 'ISBN', 'Соответствие', 'Обоснование', 'Где искать в книге', 'Удалён']);
+    LayoutName := 'BooksAISearch';
+    gridBooks.ColWidths[9] := 300;
+    gridBooks.ColWidths[10] := 300;
+  end
+  else
+  begin
+    SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
+    LayoutName := 'Books';
+  end;
+  gridBooks.Configure(FDB.Paths.UserLayoutFile,
+    'User.' + IntToStr(FDB.CurrentUser.ID) + '.' + LayoutName, 1, @GridSorted);
+  FBookAISchema := AForAI;
+  SetDeletedColumnVisible(gridBooks, chkShowDeleted.Checked);
+end;
+
+procedure TMainForm.RenderBooks(AResetRank: Boolean);
+var
   List: TList;
-  I: Integer;
+  I, Offset: Integer;
   B: TBook;
   C: TCategory;
   CatName: string;
   KeepID: TId;
+  SchemaChanged: Boolean;
 begin
   KeepID := 0;
-  if SelectedBook <> nil then
+  if not AResetRank and (SelectedBook <> nil) then
     KeepID := SelectedBook.ID;
+  SchemaChanged := FBookAISchema <> FBookSearch.Active;
+  SetBookSchema(FBookSearch.Active);
+  Offset := Ord(FBookSearch.Active);
   List := TList.Create;
   try
-    FDB.SearchBooks(Trim(edtBookSearch.Text), Trim(edtBookSearchInv.Text), List, chkShowDeleted.Checked);
+    if FBookSearch.Active then
+      for I := 0 to High(FBookSearch.Matches) do
+        List.Add(FDB.FindBook(FBookSearch.Matches[I].BookID))
+    else
+      FDB.SearchBooks(Trim(edtBookSearch.Text), Trim(edtBookSearchInv.Text), List, chkShowDeleted.Checked);
     gridBooks.RowCount := Max(2, List.Count + 1);
     if List.Count = 0 then
     begin
@@ -1552,24 +1749,39 @@ begin
       B := TBook(List[I]);
       C := FDB.FindCategory(B.CategoryID);
       if C <> nil then CatName := C.Name else CatName := '';
-      gridBooks.Cells[DATA_FIRST_COL, I + 1] := B.Title;
-      gridBooks.Cells[DATA_FIRST_COL + 1, I + 1] := B.Authors;
-      gridBooks.Cells[DATA_FIRST_COL + 2, I + 1] := B.Publisher;
-      gridBooks.Cells[DATA_FIRST_COL + 3, I + 1] := CatName;
-      gridBooks.Cells[DATA_FIRST_COL + 4, I + 1] := IntToStr(B.Year);
-      gridBooks.Cells[DATA_FIRST_COL + 5, I + 1] := B.ISBN;
-      gridBooks.Cells[DATA_FIRST_COL + 6, I + 1] := BoolToStr(B.Deleted, 'да', '');
+      gridBooks.Cells[DATA_FIRST_COL + Offset, I + 1] := B.Title;
+      gridBooks.Cells[DATA_FIRST_COL + Offset + 1, I + 1] := B.Authors;
+      gridBooks.Cells[DATA_FIRST_COL + Offset + 2, I + 1] := B.Publisher;
+      gridBooks.Cells[DATA_FIRST_COL + Offset + 3, I + 1] := CatName;
+      gridBooks.Cells[DATA_FIRST_COL + Offset + 4, I + 1] := IntToStr(B.Year);
+      gridBooks.Cells[DATA_FIRST_COL + Offset + 5, I + 1] := B.ISBN;
+      gridBooks.Cells[gridBooks.ColCount - 1, I + 1] := BoolToStr(B.Deleted, 'да', '');
       gridBooks.Objects[0, I + 1] := B;
+      if FBookSearch.Active then
+      begin
+        if FBookSearch.Matches[I].Rank > 0 then
+          gridBooks.Cells[1, I + 1] := IntToStr(FBookSearch.Matches[I].Rank)
+        else
+          gridBooks.Cells[1, I + 1] := IntToStr(I + 1);
+        gridBooks.Cells[8, I + 1] := BookSearchRelevanceText(FBookSearch.Matches[I].Relevance);
+        gridBooks.Cells[9, I + 1] := FBookSearch.Matches[I].Reason;
+        gridBooks.Cells[10, I + 1] := FBookSearch.Matches[I].Location;
+      end;
     end;
   finally
     List.Free;
   end;
   ApplyGridSorting(gridBooks);
+  if AResetRank then
+    GridSorting(gridBooks).SortBy(1, False)
+  else if SchemaChanged and not FBookSearch.Active then
+    GridSorting(gridBooks).SortBy(FNormalBookSort, FNormalBookDescending);
   if KeepID > 0 then
     SelectGridEntity(gridBooks, KeepID, False)
   else
-    SelectNearestGridRow(gridBooks, gridBooks.Row, False);
+    SelectNearestGridRow(gridBooks, 1, False);
   RefreshCopies;
+  BookActionsPopup(nil);
 end;
 
 procedure TMainForm.RefreshCopies;
@@ -1843,6 +2055,7 @@ begin
     cbOpenRouterModel.Items.Clear;
     for i := 0 to FDB.Settings.OpenRouterFavoriteModels.Count - 1 do
       cbOpenRouterModel.Items.Add(FDB.Settings.OpenRouterFavoriteModels[i]);
+    AddRecommendedSearchModels(cbOpenRouterModel.Items);
     cbOpenRouterModel.ItemIndex := cbOpenRouterModel.Items.IndexOf(Trim(Current));
     cbOpenRouterModel.Text := Current;
   finally
@@ -1854,6 +2067,158 @@ procedure TMainForm.SetOpenRouterModel(const AModel: string);
 begin
   cbOpenRouterModel.ItemIndex := cbOpenRouterModel.Items.IndexOf(Trim(AModel));
   cbOpenRouterModel.Text := AModel;
+  UpdateModelPrice;
+end;
+
+function TMainForm.ModelPriceCacheFile: string;
+begin
+  Result := FDB.Paths.CacheDir + 'OpenRouterModels.json';
+end;
+
+procedure TMainForm.UpdateModelPrice;
+begin
+  lblModelPrice.Caption := ModelPriceText(cbOpenRouterModel.Text, FPriceModels);
+  if FPriceUpdatedAt > 0 then
+    lblModelPrice.Caption := lblModelPrice.Caption + LineEnding +
+      'Цены загружены: ' + FormatDateTime('dd.mm.yyyy hh:nn', FPriceUpdatedAt)
+  else
+    lblModelPrice.Caption := lblModelPrice.Caption + LineEnding + 'Откройте список для загрузки цен.';
+end;
+
+procedure TMainForm.ModelComboChange(Sender: TObject);
+begin
+  UpdateModelPrice;
+end;
+
+procedure TMainForm.ModelComboDropDown(Sender: TObject);
+var Models: TModelInfoArray; Stamp: TDateTime;
+begin
+  if FPriceAttempted then Exit;
+  FPriceAttempted := True;
+  if LoadOpenRouterModelCatalog(Trim(edtOpenRouterApiKey.Text), ModelPriceCacheFile,
+    Models, Stamp) then
+  begin
+    FPriceModels := Models;
+    FPriceUpdatedAt := Stamp;
+  end
+  else FPriceAttempted := False;
+  UpdateModelPrice;
+  cbOpenRouterModel.Invalidate;
+end;
+
+procedure TMainForm.ModelComboDraw(Sender: TWinControl; Index: Integer;
+  ARect: TRect; State: TOwnerDrawState);
+var ID: string;
+begin
+  if (Index < 0) or (Index >= cbOpenRouterModel.Items.Count) then Exit;
+  ID := cbOpenRouterModel.Items[Index];
+  with cbOpenRouterModel.Canvas do
+  begin
+    FillRect(ARect);
+    TextRect(ARect, ARect.Left + 4, ARect.Top + 2, ID);
+    TextRect(ARect, ARect.Left + 4, ARect.Top + TextHeight('Ag') + 4,
+      ModelPriceText(ID, FPriceModels));
+  end;
+end;
+
+procedure TMainForm.ReloadSearchHistory;
+var Err: string;
+begin
+  FHistoryUpdating := True;
+  try
+    edtBookInformation.Items.Clear;
+    FreeAndNil(FSearchHistory);
+    FSearchHistory := TBookSearchHistory.Create(FDB.Paths.DataDir, FDB.CurrentUser.ID);
+    if not FSearchHistory.Load(Err) then
+      MessageDlg(Err, mtWarning, [mbOK], 0);
+  finally
+    FHistoryUpdating := False;
+  end;
+  RefreshSearchHistoryItems;
+end;
+
+procedure TMainForm.RefreshSearchHistoryItems;
+var Current: string; I: Integer;
+begin
+  Current := edtBookInformation.Text;
+  FHistoryUpdating := True;
+  edtBookInformation.Items.BeginUpdate;
+  try
+    edtBookInformation.Items.Clear;
+    for I := 0 to FSearchHistory.Count - 1 do
+      edtBookInformation.Items.AddObject(FSearchHistory[I].Caption, FSearchHistory[I]);
+    edtBookInformation.ItemIndex := -1;
+    edtBookInformation.Text := Current;
+  finally
+    edtBookInformation.Items.EndUpdate;
+    FHistoryUpdating := False;
+  end;
+end;
+
+procedure TMainForm.HistoryComboDraw(Sender: TWinControl; Index: Integer;
+  ARect: TRect; State: TOwnerDrawState);
+var Entry: TBookSearchHistoryEntry;
+begin
+  if (Index < 0) or (Index >= edtBookInformation.Items.Count) then Exit;
+  Entry := TBookSearchHistoryEntry(edtBookInformation.Items.Objects[Index]);
+  with edtBookInformation.Canvas do
+  begin
+    FillRect(ARect);
+    TextRect(ARect, ARect.Left + 4, ARect.Top + 2, Entry.Caption);
+    TextRect(ARect, ARect.Left + 4, ARect.Top + TextHeight('Ag') + 4, Entry.Details);
+  end;
+end;
+
+procedure TMainForm.HistoryComboDropDown(Sender: TObject);
+var I, W: Integer;
+begin
+  W := edtBookInformation.Width;
+  for I := 0 to FSearchHistory.Count - 1 do
+    W := Max(W, edtBookInformation.Canvas.TextWidth(FSearchHistory[I].Details) + 24);
+  edtBookInformation.ItemWidth := Min(W, Screen.WorkAreaWidth - 32);
+end;
+
+procedure TMainForm.HistoryComboSelect(Sender: TObject);
+var Entry: TBookSearchHistoryEntry; Response: TBookSearchResponse;
+  Stale: Boolean; Unavailable: Integer;
+begin
+  if FHistoryUpdating or FBookSearchRunning or (edtBookInformation.ItemIndex < 0) then Exit;
+  Entry := TBookSearchHistoryEntry(edtBookInformation.Items.Objects[edtBookInformation.ItemIndex]);
+  Response := Entry.Restore(FDB, Stale, Unavailable);
+  FHistoryUpdating := True;
+  try
+    edtBookSearch.Text := Entry.TitleQuery;
+    edtBookSearchInv.Text := Entry.InventoryQuery;
+    chkShowDeleted.Checked := Entry.IncludeDeleted;
+    edtBookInformation.Text := Entry.Query;
+  finally
+    FHistoryUpdating := False;
+  end;
+  FBookSearch.Apply(Response);
+  RenderBooks(True);
+  SetDeletedColumnVisible(gridBooks, Entry.IncludeDeleted);
+  statusBar.SimpleText := 'Сохранённый поиск: ' + Entry.Details;
+  if Stale then
+    statusBar.SimpleText := statusBar.SimpleText + '. Каталог изменился — результат требует проверки.';
+  if Unavailable > 0 then
+    statusBar.SimpleText := statusBar.SimpleText + ' Недоступных книг: ' + IntToStr(Unavailable) + '.';
+end;
+
+procedure TMainForm.ClearBookSearchHistoryClick(Sender: TObject);
+var Err: string;
+begin
+  if MessageDlg('Удалить всю историю поиска и сохранённые результаты текущего пользователя?',
+    mtConfirmation, [mbYes, mbNo], 0) <> mrYes then Exit;
+  // Сначала убираем ссылки из элементов списка; при ошибке записи список восстановится.
+  FHistoryUpdating := True;
+  try
+    edtBookInformation.Items.Clear;
+  finally
+    FHistoryUpdating := False;
+  end;
+  if not FSearchHistory.Clear(Err) then MessageDlg(Err, mtError, [mbOK], 0);
+  RefreshSearchHistoryItems;
+  RefreshBooks;
 end;
 
 procedure TMainForm.ToolbarResize(Sender: TObject);
@@ -1921,8 +2286,8 @@ begin
       else if C is TEdit then
       begin
         W := Max(C.Width, 120);
-        if C = edtBookSearch then
-          W := Max(W, Canvas.TextWidth(edtBookSearch.Placeholder) + 24);
+        if C is TPlaceholderEdit then
+          W := Max(W, Canvas.TextWidth(TPlaceholderEdit(C).Placeholder) + 24);
         C.SetBounds(X, Y, W, FieldH);
       end
       else if C is TComboBox then
@@ -2018,11 +2383,13 @@ begin
   LeftY := lblOpenRouterModel.Top + lblOpenRouterModel.Height + 4;
   cbOpenRouterModel.SetBounds(Margin, LeftY, Max(400, Canvas.TextWidth('W') * 28), FieldH);
 
+  lblModelPrice.SetBounds(Margin, cbOpenRouterModel.Top + cbOpenRouterModel.Height + 4,
+    cbOpenRouterModel.Width, TextH * 3 + 8);
   W := Canvas.TextWidth(btnSelectOpenRouterModel.Caption) + ICON_SIZE + 28;
   if W < 140 then
     W := 140;
   btnSelectOpenRouterModel.SetBounds(Margin,
-    cbOpenRouterModel.Top + cbOpenRouterModel.Height + 4,
+    lblModelPrice.Top + lblModelPrice.Height + 4,
     W, Max(FieldH, ICON_SIZE + 12));
 
   RightX := edtLibName.Left + edtLibName.Width + Max(80, Gap * 4);
@@ -2095,6 +2462,7 @@ begin
   ReflowToolbarPanel(pnlLocTop);
   ReflowToolbarPanel(pnlUsersTop);
   ReflowToolbarPanel(pnlReports);
+  if pnlReportStats.Visible then ReportFiltersResize(nil);
   ReflowToolbarPanel(pnlBackup);
   ReflowSettingsPanel;
   ClampBooksCopiesPanelHeight;
@@ -2291,17 +2659,21 @@ procedure TMainForm.btnBookSearchClearClick(Sender: TObject);
 begin
   edtBookSearch.Text := '';
   edtBookSearchInv.Text := '';
+  edtBookInformation.ItemIndex := -1;
+  edtBookInformation.Text := '';
   RefreshBooks;
   edtBookSearch.SetFocus;
 end;
 
 procedure TMainForm.edtBookSearchChange(Sender: TObject);
 begin
+  if FHistoryUpdating then Exit;
   RefreshBooks;
 end;
 
 procedure TMainForm.edtBookSearchInvChange(Sender: TObject);
 begin
+  if FHistoryUpdating then Exit;
   RefreshBooks;
 end;
 
@@ -2310,13 +2682,93 @@ begin
   if Key = #13 then
   begin
     Key := #0;
-    RefreshBooks;
+    btnBookSearchClick(Sender);
   end;
 end;
 
 procedure TMainForm.btnBookSearchClick(Sender: TObject);
+var
+  HistoryError: string;
+  Candidates: TList;
+  Snapshot: TBookSearchSnapshot;
+  Worker: TBookSearchThread;
+  Progress: TUpdateProgressForm;
 begin
-  RefreshBooks;
+  if FBookSearchRunning then Exit;
+  if Trim(edtBookInformation.Text) = '' then
+  begin
+    RefreshBooks;
+    Exit;
+  end;
+  Candidates := TList.Create;
+  Snapshot := nil;
+  try
+    FDB.SearchBooks(Trim(edtBookSearch.Text), Trim(edtBookSearchInv.Text),
+      Candidates, chkShowDeleted.Checked);
+    if Candidates.Count = 0 then
+    begin
+      MessageDlg('Нет книг, соответствующих обычным полям поиска. Измените условия.',
+        mtInformation, [mbOK], 0);
+      Exit;
+    end;
+    if (Trim(FDB.Settings.OpenRouterModel) = '') or (Trim(FDB.Settings.OpenRouterApiKey) = '') then
+    begin
+      MessageDlg('Для поиска информации задайте модель и OpenRouter API Key в настройках программы.',
+        mtInformation, [mbOK], 0);
+      Exit;
+    end;
+    Snapshot := TBookSearchSnapshot.Create(FDB, Candidates, edtBookInformation.Text);
+    Worker := TBookSearchThread.Create(Snapshot, FDB.Settings.OpenRouterModel, FDB.Settings.OpenRouterApiKey);
+    try
+      Progress := TUpdateProgressForm.Create(Self);
+      try
+        Progress.Caption := 'Поиск информации в книгах';
+        Progress.SetStatus('Поиск через нейросеть. Книг: ' + IntToStr(Snapshot.Count));
+        Progress.FProgress.Style := pbstMarquee;
+        FBookSearchRunning := True;
+        Enabled := False;
+        try
+          Progress.Show;
+          WaitForUpdateThread(Worker, Progress, nil, 0);
+        finally
+          Progress.Hide;
+          Enabled := True;
+          FBookSearchRunning := False;
+        end;
+        if Progress.Cancelled then Exit;
+        if not Worker.Success then
+        begin
+          MessageDlg(Worker.ErrorText, mtError, [mbOK], 0);
+          Exit;
+        end;
+        if Worker.Response.Status = 'clarification' then
+        begin
+          MessageDlg(Worker.Response.Message, mtInformation, [mbOK], 0);
+          Exit;
+        end;
+        FBookSearch.Apply(Worker.Response);
+        RenderBooks(True);
+        statusBar.SimpleText := 'Поиск информации: найдено книг ' +
+          IntToStr(Length(FBookSearch.Matches)) + '. Проверено книг: ' + IntToStr(Snapshot.Count);
+        if Length(FBookSearch.Matches) = 0 then
+          MessageDlg('Подходящих книг по описаниям не найдено.', mtInformation, [mbOK], 0);
+        if FSearchHistory.Add(Snapshot.Query, Trim(edtBookSearch.Text), Trim(edtBookSearchInv.Text),
+          FDB.Settings.OpenRouterModel, Snapshot.Fingerprint, chkShowDeleted.Checked,
+          Worker.Response, HistoryError) then
+          RefreshSearchHistoryItems
+        else
+          MessageDlg('Поиск выполнен, но результат не сохранён в истории.' + LineEnding + HistoryError,
+            mtWarning, [mbOK], 0);
+      finally
+        Progress.Free;
+      end;
+    finally
+      Worker.Free;
+    end;
+  finally
+    Snapshot.Free;
+    Candidates.Free;
+  end;
 end;
 
 procedure TMainForm.btnBookAddClick(Sender: TObject);
@@ -2831,6 +3283,7 @@ procedure TMainForm.ShowReportTable(ALines: TStrings);
 var
   Parts: TStringList;
   R, C, MaxCols: Integer;
+  LayoutKey: string;
 begin
   gridReport.BeginSchema;
   if FReportLines = nil then
@@ -2874,17 +3327,66 @@ begin
   finally
     Parts.Free;
   end;
-  gridReport.Configure(FDB.Paths.UserLayoutFile,
-    'User.' + IntToStr(FDB.CurrentUser.ID) + '.Report.' + IntToStr(cbReport.ItemIndex), 1, @GridSorted);
+  LayoutKey := 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Report.' + IntToStr(cbReport.ItemIndex);
+  if cbReport.ItemIndex = 9 then LayoutKey := LayoutKey + '.Statistics.' + IntToStr(cbReportStatsView.ItemIndex);
+  gridReport.Configure(FDB.Paths.UserLayoutFile, LayoutKey, 1, @GridSorted);
   ApplyGridSorting(gridReport);
   UpdateGridActiveMarker(gridReport);
+  btnReportSave.Enabled := True;
+end;
+
+procedure TMainForm.ReportFiltersResize(Sender: TObject);
+var CalcRect: TRect;
+begin
+  if FReflowingToolbar then Exit;
+  ReflowToolbarPanel(pnlReportFilters);
+  CalcRect := Classes.Rect(0, 0, Max(120, pnlReportStats.ClientWidth - 16), 0);
+  DrawText(Canvas.Handle, PChar(lblReportSummary.Caption), -1, CalcRect,
+    DT_CALCRECT or DT_LEFT or DT_WORDBREAK or DT_NOPREFIX);
+  pnlReportStats.Height := pnlReportFilters.Height +
+    Max(Canvas.TextHeight('Ag') * 2, CalcRect.Bottom - CalcRect.Top) + 16;
+end;
+
+procedure TMainForm.ReportParametersChange(Sender: TObject);
+begin
+  pnlReportStats.Visible := cbReport.ItemIndex = 9;
+  if FReportLines <> nil then FReportLines.Clear;
+  gridReport.BeginSchema;
+  gridReport.FixedRows := 0;
+  gridReport.RowCount := 1;
+  gridReport.ColCount := 1;
+  gridReport.Cells[0, 0] := '';
+  lblReportSummary.Caption := 'Укажите период и нажмите «Сформировать». Категория учитывается текущая.';
+  if pnlReportStats.Visible then ReportFiltersResize(nil);
+  btnReportSave.Enabled := False;
 end;
 
 procedure TMainForm.btnReportShowClick(Sender: TObject);
 var
   SL: TStringList;
+  FS: TFormatSettings;
+  AFrom, ATo: TDateTime;
 begin
   SL := nil;
+  if cbReport.ItemIndex = 9 then
+  begin
+    FS := DefaultFormatSettings;
+    FS.ShortDateFormat := 'dd.mm.yyyy';
+    FS.DateSeparator := '.';
+    if not TryStrToDate(edtReportFrom.Text, AFrom, FS) or
+      not TryStrToDate(edtReportTo.Text, ATo, FS) or (AFrom < 1) or (ATo < 1) then
+    begin
+      MessageDlg('Укажите даты начала и окончания в формате ДД.ММ.ГГГГ.', mtWarning, [mbOK], 0);
+      Exit;
+    end;
+    if AFrom > ATo then
+    begin
+      MessageDlg('Дата начала периода позже даты окончания.', mtWarning, [mbOK], 0);
+      Exit;
+    end;
+    FReportStatsFrom := AFrom;
+    FReportStatsTo := ATo;
+  end;
   case cbReport.ItemIndex of
     0: SL := FReports.BooksCatalog;
     1: SL := FReports.CopiesByStatus;
@@ -2895,10 +3397,24 @@ begin
     6: SL := FReports.LoansHistory(0, 0);
     7: SL := FReports.ReadersList;
     8: SL := FReports.ActionsLog(0, 0);
+    9: SL := FReports.LoansStatistics(AFrom, ATo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
   end;
   if SL <> nil then
   try
     ShowReportTable(SL);
+    if cbReport.ItemIndex = 9 then
+    begin
+      lblReportSummary.Caption := Format('С %s по %s включительно. Выдач: %d; разных книг: %d; уникальных читателей: %d.',
+        [FormatDateRu(AFrom), FormatDateRu(ATo), FReportStatsSummary.Loans,
+         FReportStatsSummary.Books, FReportStatsSummary.Readers]) + LineEnding +
+         'Продления не считаются выдачами. Категория учитывается текущая.';
+      if FReportStatsSummary.Loans = 0 then
+        lblReportSummary.Caption := 'За выбранный период выдач нет. ' + lblReportSummary.Caption;
+      if FReportStatsSummary.UnlinkedLoans > 0 then
+        lblReportSummary.Caption := lblReportSummary.Caption + LineEnding +
+          'Не удалось связать с книгой (не включены): ' + IntToStr(FReportStatsSummary.UnlinkedLoans) + '.';
+      ReportFiltersResize(nil);
+    end;
   finally
     SL.Free;
   end;
@@ -2907,15 +3423,33 @@ end;
 procedure TMainForm.btnReportSaveClick(Sender: TObject);
 var
   SD: TSaveDialog;
+  ExportLines: TStringList;
 begin
   if (FReportLines = nil) or (FReportLines.Count = 0) then
     btnReportShowClick(Sender);
+  if (FReportLines = nil) or (FReportLines.Count = 0) then Exit;
   SD := TSaveDialog.Create(Self);
   try
     SD.Filter := 'CSV|*.csv|Текст|*.txt';
     SD.DefaultExt := 'csv';
+    if cbReport.ItemIndex = 9 then SD.FileName := 'Статистика_выдач.csv';
     if SD.Execute then
-      FReportLines.SaveToFile(SD.FileName);
+    begin
+      ExportLines := nil;
+      try
+        if cbReport.ItemIndex = 9 then
+        begin
+          ExportLines := FReports.LoansStatisticsExport(FReportLines, FReportStatsFrom,
+            FReportStatsTo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
+          ExportLines.SaveToFile(SD.FileName);
+        end
+        else FReportLines.SaveToFile(SD.FileName);
+      except
+        on E: Exception do
+          MessageDlg('Не удалось сохранить отчёт: ' + E.Message, mtError, [mbOK], 0);
+      end;
+      ExportLines.Free;
+    end;
   finally
     SD.Free;
   end;
@@ -3165,16 +3699,10 @@ procedure TMainForm.btnSelectOpenRouterModelClick(Sender: TObject);
 var
   ApiKey, Current, Selected: string;
   Favorites: TStringList;
+  Models: TModelInfoArray;
+  Stamp: TDateTime;
 begin
   ApiKey := Trim(edtOpenRouterApiKey.Text);
-  if ApiKey = '' then
-  begin
-    MessageDlg('Сначала введите OpenRouter API Key, чтобы получить список моделей.',
-      mtWarning, [mbOK], 0);
-    edtOpenRouterApiKey.SetFocus;
-    Exit;
-  end;
-
   btnSelectOpenRouterModel.Enabled := False;
   btnSelectOpenRouterModel.Caption := 'Загрузка...';
   Screen.Cursor := crHourGlass;
@@ -3183,7 +3711,7 @@ begin
   try
     if SelectOpenRouterModelDialog(ApiKey, Current,
       FDB.Settings.OpenRouterFavoriteModels, Selected, Favorites,
-      FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Models') then
+      FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Models', ModelPriceCacheFile) then
     begin
       FDB.Settings.OpenRouterFavoriteModels.Assign(Favorites);
       RefreshOpenRouterModelList;
@@ -3192,6 +3720,13 @@ begin
     end;
   finally
     Favorites.Free;
+    if LoadModelPriceCache(ModelPriceCacheFile, Models, Stamp) then
+    begin
+      FPriceModels := Models;
+      FPriceUpdatedAt := Stamp;
+    end;
+    UpdateModelPrice;
+    cbOpenRouterModel.Invalidate;
     Screen.Cursor := crDefault;
     btnSelectOpenRouterModel.Caption := '...';
     btnSelectOpenRouterModel.Enabled := True;
@@ -3227,6 +3762,7 @@ begin
   Dir := FDB.Paths.BackupDir + lstBackups.Items[lstBackups.ItemIndex];
   if FDB.RestoreBackup(Dir, Err) then
   begin
+    ReloadSearchHistory;
     MessageDlg('Данные, обложки и настройки восстановлены.' +
       LineEnding + 'Для аварийной замены файлов программы используйте ' +
       'RESTORE.txt в каталоге копии.', mtInformation, [mbOK], 0);
@@ -3355,6 +3891,7 @@ end;
 
 procedure TMainForm.chkShowDeletedChange(Sender: TObject);
 begin
+  if FHistoryUpdating then Exit;
   SetDeletedColumnVisible(gridBooks, chkShowDeleted.Checked);
   RefreshBooks;
 end;

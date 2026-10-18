@@ -15,7 +15,16 @@ uses
 function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
   const AFavoriteModels: TStrings; out ASelectedId: string;
   out ASelectedFavoriteModels: TStringList;
-  const ALayoutFile: string = ''; const ALayoutKey: string = ''): Boolean;
+  const ALayoutFile: string = ''; const ALayoutKey: string = '';
+  const APriceCache: string = ''): Boolean;
+
+function LoadOpenRouterModelCatalog(const AApiKey, APriceCache: string;
+  out AModels: TModelInfoArray; out AUpdatedAt: TDateTime): Boolean;
+
+{ Создаёт заполненный диалог без сети и без показа. Форму освобождает вызывающий. }
+function CreateModelSelectionForm(const AModels: TModelInfoArray;
+  const ACurrentId: string; AFavoriteModels: TStrings;
+  const ALayoutFile: string = ''; const ALayoutKey: string = ''): TForm;
 
 implementation
 
@@ -33,16 +42,18 @@ const
 type
   TModelsLoadThread = class(TThread)
   private
-    FApiKey: string;
+    FApiKey, FPriceCache: string;
+    FUpdatedAt: TDateTime;
     FModels: TModelInfoArray;
     FError: string;
     FCompleted: LongInt;
   protected
     procedure Execute; override;
   public
-    constructor Create(const AApiKey: string);
+    constructor Create(const AApiKey, APriceCache: string);
     function IsCompleted: Boolean;
     property Models: TModelInfoArray read FModels;
+    property UpdatedAt: TDateTime read FUpdatedAt;
     property ErrorText: string read FError;
   end;
 
@@ -93,21 +104,38 @@ type
     function GetSelectedId: string;
   end;
 
-function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
-  const AFavoriteModels: TStrings; out ASelectedId: string;
-  out ASelectedFavoriteModels: TStringList;
-  const ALayoutFile, ALayoutKey: string): Boolean;
+function CreateModelSelectionForm(const AModels: TModelInfoArray;
+  const ACurrentId: string; AFavoriteModels: TStrings;
+  const ALayoutFile, ALayoutKey: string): TForm;
+var F: TSelectModelForm;
+begin
+  F := TSelectModelForm.Create(nil);
+  try
+    F.grid.Configure(ALayoutFile, ALayoutKey, 0);
+    F.FAllModels := Copy(AModels);
+    F.FCurrentId := ACurrentId;
+    F.FFavoriteModels.Assign(AFavoriteModels);
+    F.FLoading := False;
+    F.LoadGrid;
+    F.OnShow := @F.FormShow;
+    Result := F;
+  except
+    F.Free;
+    raise;
+  end;
+end;
+
+function LoadOpenRouterModelCatalog(const AApiKey, APriceCache: string;
+  out AModels: TModelInfoArray; out AUpdatedAt: TDateTime): Boolean;
 var
-  F: TSelectModelForm;
   LoadingForm: TModelsLoadingForm;
   Worker: TModelsLoadThread;
-  Models: TModelInfoArray;
   Err: string;
 begin
   Result := False;
-  ASelectedId := '';
-  ASelectedFavoriteModels := nil;
-  Worker := TModelsLoadThread.Create(AApiKey);
+  AModels := nil;
+  AUpdatedAt := 0;
+  Worker := TModelsLoadThread.Create(AApiKey, APriceCache);
   LoadingForm := TModelsLoadingForm.Create(nil, Worker);
   try
     Worker.Start;
@@ -121,7 +149,8 @@ begin
       Exit;
     end;
     Worker.WaitFor;
-    Models := Worker.Models;
+    AModels := Worker.Models;
+    AUpdatedAt := Worker.UpdatedAt;
     Err := Worker.ErrorText;
   finally
     LoadingForm.Free;
@@ -129,22 +158,42 @@ begin
   end;
   if Err <> '' then
   begin
-    MessageDlg('Не удалось получить список моделей OpenRouter.' + LineEnding +
-      LineEnding + Err, mtError, [mbOK], 0);
+    MessageDlg('Не удалось получить список моделей OpenRouter.' + LineEnding + Err,
+      mtError, [mbOK], 0);
     Exit;
   end;
-  { В диалоге показываем только платные модели от популярных провайдеров —
-    бесплатные и мелкие провайдеры убраны за ненадобностью. }
+  Result := True;
+end;
+
+function SelectOpenRouterModelDialog(const AApiKey, ACurrentId: string;
+  const AFavoriteModels: TStrings; out ASelectedId: string;
+  out ASelectedFavoriteModels: TStringList;
+  const ALayoutFile, ALayoutKey, APriceCache: string): Boolean;
+var
+  F: TSelectModelForm;
+  Models: TModelInfoArray;
+  Stamp: TDateTime;
+  Pinned: TStringList;
+begin
+  Result := False;
+  ASelectedId := '';
+  ASelectedFavoriteModels := nil;
+  if not LoadOpenRouterModelCatalog(AApiKey, APriceCache, Models, Stamp) then Exit;
   FilterPopularPaid(Models);
   SortModelsByPromptPrice(Models);
-  F := TSelectModelForm.Create(nil);
+  Pinned := TStringList.Create;
   try
-    F.grid.Configure(ALayoutFile, ALayoutKey, 0);
-    F.FAllModels := Models;
-    F.FCurrentId := ACurrentId;
-    F.FFavoriteModels.Assign(AFavoriteModels);
-    F.Caption := 'Выбор модели OpenRouter';
-    F.OnShow := @F.FormShow;
+    Pinned.Assign(AFavoriteModels);
+    AddRecommendedSearchModels(Pinned);
+    if Pinned.IndexOf(ACurrentId) < 0 then Pinned.Add(ACurrentId);
+    LimitModelSelection(Models, MAX_MODELS_IN_DIALOG, Pinned);
+  finally
+    Pinned.Free;
+  end;
+  F := TSelectModelForm(CreateModelSelectionForm(Models, ACurrentId,
+    AFavoriteModels, ALayoutFile, ALayoutKey));
+  try
+    F.Caption := 'Выбор модели OpenRouter — цены на ' + FormatDateTime('dd.mm.yyyy hh:nn', Stamp);
     if F.ShowModal = mrOK then
     begin
       ASelectedId := F.GetSelectedId;
@@ -159,29 +208,30 @@ end;
 
 { TModelsLoadThread }
 
-constructor TModelsLoadThread.Create(const AApiKey: string);
+constructor TModelsLoadThread.Create(const AApiKey, APriceCache: string);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
   FApiKey := AApiKey;
+  FPriceCache := APriceCache;
 end;
 
 procedure TModelsLoadThread.Execute;
+var CacheError: string;
 begin
   try
     if FetchOpenRouterModels(FApiKey, FModels, FError) then
     begin
-      FilterPopularPaid(FModels);
-      SortModelsByPromptPrice(FModels);
-      { Ограничиваем каталог, чтобы TLibraryGrid не блокировал интерфейс
-        при создании тысяч строк. Модель вне списка можно ввести вручную. }
-      if Length(FModels) > MAX_MODELS_IN_DIALOG then
-        SetLength(FModels, MAX_MODELS_IN_DIALOG);
-    end;
+      FUpdatedAt := Now;
+      if FPriceCache <> '' then
+        SaveModelPriceCache(FPriceCache, FModels, FUpdatedAt, CacheError);
+    end
+    else if LoadModelPriceCache(FPriceCache, FModels, FUpdatedAt) then
+      FError := '';
   except
-    on E: Exception do
-      FError := 'Непредвиденная ошибка загрузки: ' + E.Message;
+    FError := 'Не удалось загрузить каталог моделей.';
   end;
+  FApiKey := '';
   InterlockedExchange(FCompleted, 1);
 end;
 
@@ -312,7 +362,6 @@ begin
   grid.OnDblClick := @gridDblClick;
   grid.OnMouseDown := @gridMouseDown;
   grid.OnKeyDown := @gridKeyDown;
-  grid.OnSelectCell := @gridSelectCell;
 
   btnCancel := TBitBtn.Create(Self);
   btnCancel.Parent := Self;
@@ -333,21 +382,23 @@ begin
   btnOK.Top := ClientHeight - MARGIN - BTN_H;
   btnOK.Width := 140;
   btnOK.Height := BTN_H;
-  btnOK.Enabled := True;
+  btnOK.Enabled := False;
   btnOK.ModalResult := mrOK;
   btnOK.Left := btnCancel.Left - 8 - btnOK.Width;
+  // Привязка клавиш запрашивает Canvas формы и создаёт native handle таблицы.
+  // Событие выбора строки подключаем только после создания обеих кнопок.
+  grid.OnSelectCell := @gridSelectCell;
 end;
 
 destructor TSelectModelForm.Destroy;
 begin
+  FLoading := True;
   FFavoriteModels.Free;
   inherited Destroy;
 end;
 
 procedure TSelectModelForm.FormShow(Sender: TObject);
 begin
-  FLoading := False;
-  LoadGrid;
   edtFilter.SetFocus;
 end;
 
@@ -405,6 +456,7 @@ end;
 procedure TSelectModelForm.gridSelectCell(Sender: TObject; aCol, aRow: Integer;
   var CanSelect: Boolean);
 begin
+  if FLoading or (btnOK = nil) then Exit;
   btnOK.Enabled := aRow > 0;
 end;
 
@@ -481,6 +533,7 @@ begin
           Break;
         end;
   end;
+  btnOK.Enabled := (grid.Row > 0) and (grid.Row < grid.RowCount);
   UpdateStatus;
 end;
 

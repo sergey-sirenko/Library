@@ -8,6 +8,10 @@ uses
   Classes, SysUtils, Contnrs, uDatabase, uEntities, uTypes;
 
 type
+  TLoanStatisticsSummary = record
+    Loans, Books, Readers, UnlinkedLoans: Integer;
+  end;
+
   TReportService = class
   private
     FDB: TLibraryDB;
@@ -21,6 +25,10 @@ type
     function BooksOnHands: TStringList;
     function OverdueLoans: TStringList;
     function LoansHistory(AFrom, ATo: TDateTime): TStringList;
+    function LoansStatistics(AFrom, ATo: TDateTime; AByCategory: Boolean;
+      out ASummary: TLoanStatisticsSummary): TStringList;
+    function LoansStatisticsExport(ALines: TStrings; AFrom, ATo: TDateTime;
+      AByCategory: Boolean; const ASummary: TLoanStatisticsSummary): TStringList;
     function ReaderHistory(AReader: TReader): TStringList;
     function ReadersList: TStringList;
     function ActionsLog(AFrom, ATo: TDateTime): TStringList;
@@ -30,7 +38,164 @@ type
 implementation
 
 uses
-  StrUtils;
+  StrUtils, DateUtils, LazUTF8, Math;
+
+type
+  TLoanStatisticsGroup = class
+    ID: TId;
+    Title, Authors, Category: string;
+    Loans: Integer;
+    LastIssue: TDateTime;
+    Books, Readers: TStringList;
+    constructor Create;
+    destructor Destroy; override;
+  end;
+
+function NewIDSet: TStringList;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+end;
+
+constructor TLoanStatisticsGroup.Create;
+begin
+  inherited Create;
+  Books := NewIDSet;
+  Readers := NewIDSet;
+end;
+
+destructor TLoanStatisticsGroup.Destroy;
+begin
+  Books.Free;
+  Readers.Free;
+  inherited Destroy;
+end;
+
+function CompareStatisticsGroups(P1, P2: Pointer): Integer;
+var A, B: TLoanStatisticsGroup;
+begin
+  A := TLoanStatisticsGroup(P1);
+  B := TLoanStatisticsGroup(P2);
+  if A.Loans > B.Loans then Exit(-1);
+  if A.Loans < B.Loans then Exit(1);
+  Result := UTF8CompareText(A.Title, B.Title);
+  if Result <> 0 then Exit;
+  if A.ID < B.ID then Exit(-1);
+  if A.ID > B.ID then Exit(1);
+end;
+
+function TReportService.LoansStatistics(AFrom, ATo: TDateTime; AByCategory: Boolean;
+  out ASummary: TLoanStatisticsSummary): TStringList;
+var Groups: TObjectList; Index, Books, Readers: TStringList;
+  I, N: Integer; Key: string; Group: TLoanStatisticsGroup;
+  Loan: TLoan; Copy: TCopy; Book: TBook; Category: TCategory;
+begin
+  ASummary := Default(TLoanStatisticsSummary);
+  if IsNan(AFrom) or IsInfinite(AFrom) or IsNan(ATo) or IsInfinite(ATo) or
+    (AFrom < 1) or (ATo < 1) or (AFrom > 2958465) or (ATo > 2958465) then
+    raise Exception.Create('Укажите корректные даты периода.');
+  AFrom := DateOf(AFrom);
+  ATo := DateOf(ATo);
+  if AFrom > ATo then raise Exception.Create('Дата начала периода позже даты окончания.');
+  Groups := TObjectList.Create(True);
+  Index := TStringList.Create;
+  Index.Sorted := True;
+  Books := NewIDSet;
+  Readers := NewIDSet;
+  Result := TStringList.Create;
+  try
+    try
+      if AByCategory then Result.Add('Категория;Выдач;Книг;Читателей')
+      else Result.Add('Книга;Автор;Категория;Выдач;Читателей;Дата последней выдачи');
+      for I := 0 to FDB.Loans.Count - 1 do
+      begin
+        Loan := TLoan(FDB.Loans[I]);
+        if Loan.Deleted or (Loan.IssuedAt < AFrom) or (Loan.IssuedAt >= ATo + 1) then Continue;
+        Copy := FDB.FindCopy(Loan.CopyID);
+        Book := nil;
+        if Copy <> nil then Book := FDB.FindBook(Copy.BookID);
+        if Book = nil then
+        begin
+          Inc(ASummary.UnlinkedLoans);
+          Continue;
+        end;
+        Category := FDB.FindCategory(Book.CategoryID);
+        if AByCategory then
+        begin
+          if Category <> nil then Key := IntToStr(Category.ID) else Key := '0';
+        end
+        else Key := IntToStr(Book.ID);
+        N := Index.IndexOf(Key);
+        if N < 0 then
+        begin
+          Group := TLoanStatisticsGroup.Create;
+          Groups.Add(Group);
+          Group.ID := StrToInt64(Key);
+          if Category <> nil then Group.Category := Category.Name
+          else Group.Category := 'Без категории';
+          if AByCategory then Group.Title := Group.Category
+          else
+          begin
+            Group.Title := Book.Title;
+            Group.Authors := Book.Authors;
+          end;
+          Index.AddObject(Key, Group);
+        end
+        else Group := TLoanStatisticsGroup(Index.Objects[N]);
+        Inc(Group.Loans);
+        if Loan.ReaderID > 0 then
+        begin
+          Group.Readers.Add(IntToStr(Loan.ReaderID));
+          Readers.Add(IntToStr(Loan.ReaderID));
+        end;
+        Group.Books.Add(IntToStr(Book.ID));
+        Books.Add(IntToStr(Book.ID));
+        if Loan.IssuedAt > Group.LastIssue then Group.LastIssue := Loan.IssuedAt;
+        Inc(ASummary.Loans);
+      end;
+      ASummary.Books := Books.Count;
+      ASummary.Readers := Readers.Count;
+      Groups.Sort(@CompareStatisticsGroups);
+      for I := 0 to Groups.Count - 1 do
+      begin
+        Group := TLoanStatisticsGroup(Groups[I]);
+        if AByCategory then
+          Result.Add(Format('%s;%d;%d;%d', [CsvEscape(Group.Title), Group.Loans,
+            Group.Books.Count, Group.Readers.Count]))
+        else
+          Result.Add(Format('%s;%s;%s;%d;%d;%s', [CsvEscape(Group.Title),
+            CsvEscape(Group.Authors), CsvEscape(Group.Category), Group.Loans,
+            Group.Readers.Count, FormatDateTimeRu(Group.LastIssue)]));
+      end;
+    except
+      Result.Free;
+      raise;
+    end;
+  finally
+    Readers.Free;
+    Books.Free;
+    Index.Free;
+    Groups.Free;
+  end;
+end;
+
+function TReportService.LoansStatisticsExport(ALines: TStrings; AFrom, ATo: TDateTime;
+  AByCategory: Boolean; const ASummary: TLoanStatisticsSummary): TStringList;
+begin
+  Result := TStringList.Create;
+  Result.Add('Статистика выдач');
+  Result.Add('Период с;' + FormatDateRu(DateOf(AFrom)) + ';по;' + FormatDateRu(DateOf(ATo)));
+  if AByCategory then Result.Add('Группировка;По категориям')
+  else Result.Add('Группировка;По книгам');
+  Result.Add('Всего выдач;' + IntToStr(ASummary.Loans));
+  Result.Add('Разных книг;' + IntToStr(ASummary.Books));
+  Result.Add('Уникальных читателей;' + IntToStr(ASummary.Readers));
+  if ASummary.UnlinkedLoans > 0 then
+    Result.Add('Не удалось связать с книгой (не включены);' + IntToStr(ASummary.UnlinkedLoans));
+  Result.Add('');
+  Result.AddStrings(ALines);
+end;
 
 constructor TReportService.Create(ADB: TLibraryDB);
 begin
