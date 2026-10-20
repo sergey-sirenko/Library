@@ -432,6 +432,98 @@ begin
   end;
 end;
 
+procedure TestAppendedHiddenColumn;
+var
+  G: TLibraryGrid;
+  SL: TStringList;
+  FileName: string;
+  UseColumns: Boolean;
+  procedure Fill(Count: Integer);
+  begin
+    G.FixedCols := 0;
+    if G.Columns.Count = 0 then G.ColCount := Count;
+    if UseColumns then
+      while G.Columns.Count < Count do G.Columns.Add;
+    G.RowCount := 2;
+    G.ColWidths[1] := 180;
+    G.ColWidths[2] := 90;
+    G.ColWidths[3] := 140;
+    if Count = 5 then
+    begin
+      G.Cells[4, 0] := 'Описание';
+      G.ColWidths[4] := 300;
+      G.SetFieldDefaultVisible(4, False);
+      G.CaptureDefaults;
+    end;
+  end;
+begin
+  FileName := GetTempFileName(GetTempDir, 'grid');
+  SL := TStringList.Create;
+  try
+    for UseColumns := False to True do
+    begin
+      SL.Clear;
+      SL.SaveToFile(FileName);
+      G := TLibraryGrid.Create(nil);
+      try
+        Fill(4);
+        G.Configure(FileName, 'Books', 1);
+        G.MoveField(3, 1);
+        G.ColWidths[2] := 177;
+        G.SetFieldVisible(3, False);
+        G.SaveLayout;
+        G.BeginSchema;
+        Fill(5);
+        G.Configure(FileName, 'Books', 1);
+        Check((G.LogicalColumn(1) = 3) and (G.LogicalColumn(2) = 1) and
+          (G.LogicalColumn(3) = 2), 'старый порядок сохранён после добавления поля');
+        Check((G.ColWidths[2] = 177) and not G.FieldVisible(3),
+          'старые ширины и скрытые поля сохранены');
+        Check((G.PhysicalColumn(4) = 4) and not G.FieldVisible(4) and
+          (G.ColWidths[4] = 0), 'новое поле добавлено в конец скрытым');
+        G.SetFieldVisible(4, True);
+        Check(G.ColWidths[4] = 300, 'новое поле включается с заданной шириной');
+        G.MoveField(4, 1);
+        G.ColWidths[4] := 333;
+        G.SaveLayout;
+        G.BeginSchema;
+        Fill(5);
+        G.Configure(FileName, 'Books', 1);
+        Check(G.FieldVisible(4) and (G.PhysicalColumn(4) = 1) and
+          (G.ColWidths[4] = 333), 'выбор пользователя для нового поля сохраняется');
+        G.ResetLayout;
+        Check(not G.FieldVisible(4) and (G.PhysicalColumn(4) = 4) and
+          G.FieldVisible(3) and (G.ColWidths[2] = 90), 'сброс восстанавливает видимость по умолчанию');
+        G.SetFieldVisible(4, True);
+        Check(G.ColWidths[4] = 300, 'сброс восстанавливает ширину скрытого по умолчанию поля');
+        G.SetFieldVisible(4, False);
+        G.SaveLayout;
+        G.BeginSchema;
+        Fill(5);
+        G.Configure(FileName, 'Books', 1);
+        Check(not G.FieldVisible(4), 'скрытие нового поля сохраняется');
+        G.BeginSchema;
+        Fill(5);
+        G.Configure(FileName, 'OtherUser', 1);
+        Check(not G.FieldVisible(4) and G.FieldVisible(3), 'новый пользователь получает стандартный вид');
+        G.BeginSchema;
+        Fill(5);
+        SL.LoadFromFile(FileName);
+        SL.Values['Bad.ColumnsV1.Order'] := '1,3';
+        SL.SaveToFile(FileName);
+        G.Configure(FileName, 'Bad', 1);
+        Check((G.LogicalColumn(1) = 1) and not G.FieldVisible(4),
+          'неполная перестановка с пропуском не применяется');
+      finally
+        G.Free;
+      end;
+    end;
+  finally
+    SL.Free;
+    DeleteFile(FileName);
+  end;
+end;
+
 procedure TestBookSearchRanking;
 var
   G: TLibraryGrid;
@@ -480,6 +572,7 @@ begin
   Application.Initialize;
   try
     TestColumnLayouts;
+    TestAppendedHiddenColumn;
     TestBookSearchRanking;
     TestValues;
     TestLoanStatisticsSorting;

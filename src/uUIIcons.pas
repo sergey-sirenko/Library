@@ -35,8 +35,9 @@ const
   icoSave = 22;
   icoTest = 23;
   icoRefresh = 24;
+  icoHelp = 25;
 
-  ICON_COUNT = 25;
+  ICON_COUNT = 26;
   ICON_SIZE = 16;
 
 procedure BuildAppIcons(AImages: TCustomImageList);
@@ -346,6 +347,15 @@ end;
 type
   TIconDrawProc = procedure(C: TCanvas);
 
+procedure DrawHelp(C: TCanvas);
+begin
+  C.Ellipse(1, 1, 15, 15);
+  C.Brush.Style := bsClear;
+  C.Font.Size := 9;
+  C.Font.Style := [fsBold];
+  C.TextOut(5, 0, '?');
+end;
+
 procedure AddIcon(AImages: TCustomImageList; ADraw: TIconDrawProc);
 var
   Bmp: TBitmap;
@@ -391,6 +401,7 @@ begin
   AddIcon(AImages, @DrawSave);
   AddIcon(AImages, @DrawCheck);
   AddIcon(AImages, @DrawRefresh);
+  AddIcon(AImages, @DrawHelp);
 end;
 
 end.

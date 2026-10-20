@@ -13,7 +13,7 @@ type
   TLibraryGrid = class(TStringGrid)
   private
     FOrder, FWidths, FDefaults: array of Integer;
-    FHidden, FAllowed: array of Boolean;
+    FHidden, FAllowed, FDefaultHidden: array of Boolean;
     FFileName, FKey: string;
     FFirst: Integer;
     FDefaultsCaptured: Boolean;
@@ -38,6 +38,7 @@ type
     function PhysicalColumn(C: Integer): Integer;
     procedure MoveField(C, Position: Integer);
     procedure SetFieldVisible(C: Integer; AVisible: Boolean);
+    procedure SetFieldDefaultVisible(C: Integer; AVisible: Boolean);
     function FieldVisible(C: Integer): Boolean;
     procedure SetFieldAllowed(C: Integer; AAllowed: Boolean);
     procedure Configure(const AFileName, AKey: string; AFirst: Integer;
@@ -61,6 +62,7 @@ type
   TColumnDialog = class(TForm)
   public
     List: TCheckListBox;
+    Grid: TLibraryGrid;
     ResetWidths: Boolean;
     procedure MoveUp(Sender: TObject);
     procedure MoveDown(Sender: TObject);
@@ -95,6 +97,7 @@ begin
   SetLength(FWidths, ColCount);
   SetLength(FDefaults, ColCount);
   SetLength(FHidden, ColCount);
+  SetLength(FDefaultHidden, ColCount);
   SetLength(FAllowed, ColCount);
   for I := 0 to ColCount - 1 do
   begin
@@ -102,6 +105,7 @@ begin
     FWidths[I] := inherited ColWidths[I];
     FDefaults[I] := FWidths[I];
     FHidden[I] := False;
+    FDefaultHidden[I] := False;
     FAllowed[I] := True;
   end;
 end;
@@ -202,6 +206,14 @@ begin
   ApplyVisibility(C);
 end;
 
+procedure TLibraryGrid.SetFieldDefaultVisible(C: Integer; AVisible: Boolean);
+begin
+  EnsureMapping;
+  if (C < FFirst) or (C >= ColCount) then Exit;
+  FDefaultHidden[C] := not AVisible;
+  SetFieldVisible(C, AVisible);
+end;
+
 function TLibraryGrid.FieldVisible(C: Integer): Boolean;
 begin
   EnsureMapping;
@@ -222,7 +234,7 @@ begin
   for I := FFirst to ColCount - 1 do
   begin
     MoveField(I, I);
-    FHidden[I] := False;
+    FHidden[I] := FDefaultHidden[I];
     FWidths[I] := FDefaults[I];
     inherited ColWidths[I] := 0;
     ApplyVisibility(I);
@@ -243,7 +255,7 @@ var I: Integer;
 begin
   EnsureMapping;
   for I := 0 to ColCount - 1 do
-    if ReadWidth(I) > 0 then FDefaults[I] := ReadWidth(I);
+    FDefaults[I] := FWidths[I];
   FDefaultsCaptured := True;
 end;
 
@@ -267,13 +279,14 @@ begin
       Parts.StrictDelimiter := True;
       Parts.Delimiter := ',';
       Parts.DelimitedText := Raw;
-      { Сначала проверяем всю перестановку: повреждённые настройки игнорируем. }
-      if Parts.Count = ColCount - FFirst then
+      { Старую полную перестановку полей сохраняем при добавлении колонок в конец.
+        Повреждённые настройки игнорируем до применения перестановки. }
+      if (Parts.Count > 0) and (Parts.Count <= ColCount - FFirst) then
       begin
         for I := 0 to Parts.Count - 1 do
         begin
           C := StrToIntDef(Parts[I], -1);
-          if (C < FFirst) or (C >= ColCount) then Exit;
+          if (C < FFirst) or (C >= FFirst + Parts.Count) then Exit;
           for J := 0 to I - 1 do
             if StrToIntDef(Parts[J], -1) = C then Exit;
         end;
@@ -284,7 +297,8 @@ begin
       begin
         W := StrToIntDef(SL.Values[FKey + '.Width.' + IntToStr(I)], FWidths[I]);
         if (W >= 20) and (W <= 2000) then WriteWidth(I, W);
-        SetFieldVisible(I, SL.Values[FKey + '.Hidden.' + IntToStr(I)] <> '1');
+        Raw := SL.Values[FKey + '.Hidden.' + IntToStr(I)];
+        if Raw <> '' then SetFieldVisible(I, Raw <> '1');
       end;
       VisibleCount := 0;
       for I := FFirst to ColCount - 1 do
@@ -378,7 +392,8 @@ begin
         List.Items.Move(J, I);
         Break;
       end;
-  for I := 0 to List.Count - 1 do List.Checked[I] := True;
+  for I := 0 to List.Count - 1 do
+    List.Checked[I] := not Grid.FDefaultHidden[PtrInt(List.Items.Objects[I])];
   ResetWidths := True;
 end;
 
@@ -408,6 +423,7 @@ begin
     D.ClientWidth := 486;
     D.ClientHeight := 350;
     D.Tag := FFirst;
+    D.Grid := Self;
     D.List := TCheckListBox.Create(D);
     D.List.Parent := D;
     D.List.SetBounds(16, 16, 270, 318);

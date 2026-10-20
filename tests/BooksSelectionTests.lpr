@@ -20,6 +20,7 @@ begin
   B := TBook.Create;
   B.ID := ID;
   B.Title := Title;
+  if ID <> 3 then B.Description := 'Описание ' + Title + LineEnding + 'Вторая строка';
   DB.Books.Add(B);
 end;
 
@@ -89,6 +90,13 @@ begin
     // Инициализация без Show/ShowModal, сетевых обращений и имитации ввода.
     F.FormShow(nil);
     Check(not F.Visible, 'форма не показывается при проверке');
+    Check(not F.gridBooks.FieldVisible(8), 'описание каталога скрыто по умолчанию');
+    Check(F.gridBooks.Cells[8, 0] = 'Описание', 'заголовок описания каталога');
+    Check(F.gridBooks.ColWidths[7] = 0, 'Удалён скрыт независимо от описания');
+    F.gridBooks.SetFieldVisible(8, True);
+    F.gridBooks.MoveField(8, 2);
+    F.gridBooks.ColWidths[8] := 345;
+    F.gridBooks.SaveLayout;
     Entry.Query := 'Искусственная тема';
     Entry.Model := 'test/model';
     Entry.CreatedAt := Now;
@@ -107,7 +115,12 @@ begin
     HistoryIndex := F.edtBookInformation.Items.AddObject(Entry.Caption, Entry);
     F.edtBookInformation.ItemIndex := HistoryIndex;
     F.HistoryComboSelect(nil);
-    Check(F.gridBooks.ColCount = 12, 'состав колонок подборки сохранён');
+    Check(F.gridBooks.ColCount = 13, 'состав колонок подборки сохранён');
+    Check(not F.gridBooks.FieldVisible(12), 'описание подборки скрыто независимо от каталога');
+    Check(F.gridBooks.Cells[12, 0] = 'Описание', 'заголовок описания подборки');
+    F.gridBooks.SetFieldVisible(12, True);
+    F.gridBooks.MoveField(12, 3);
+    F.gridBooks.SaveLayout;
     Check(TBook(F.gridBooks.Objects[0, 1]).ID = 2, 'порядок модели сохранён');
     CheckCopies(F, 2, 1);
     F.gridBooks.Row := 2;
@@ -127,12 +140,24 @@ begin
     for I := 1 to 3 do
     begin
       B := TBook(F.gridBooks.Objects[0, I]);
+      Check(F.gridBooks.Cells[12, I] = B.Description, 'описание связано с книгой после сортировки');
+      Check(F.gridBooks.Cells[11, I] = '', 'описание не попало в признак удаления');
       Check(F.gridBooks.Cells[9, I] = 'Причина ' + IntToStr(B.ID), 'обоснование связано с книгой после сортировки');
       if B.ID = 2 then Check(F.gridBooks.Cells[1, I] = '1', 'исходный ранг сохранён');
     end;
     F.edtBookInformation.Text := '';
     F.edtBookSearchChange(nil);
-    Check(F.gridBooks.ColCount = 8, 'состав колонок обычного каталога сохранён');
+    Check(F.gridBooks.ColCount = 9, 'состав колонок обычного каталога сохранён');
+    Check(F.gridBooks.FieldVisible(8) and (F.gridBooks.PhysicalColumn(8) = 2) and
+      (F.gridBooks.ColWidths[8] = 345), 'раскладка описания каталога восстановлена');
+    for I := 1 to 3 do
+      Check(F.gridBooks.Cells[8, I] = TBook(F.gridBooks.Objects[0, I]).Description,
+        'описание каталога соответствует карточке, включая пустое');
+    GridSorting(F.gridBooks).SortBy(8, False);
+    Check(TBook(F.gridBooks.Objects[0, 1]).ID = 3, 'сортировка описания: пустое значение первым');
+    GridSorting(F.gridBooks).SortBy(1, False);
+    F.gridBooks.ResetLayout;
+    Check(not F.gridBooks.FieldVisible(8), 'стандартный вид скрывает описание');
     F.gridBooks.Row := 2;
     CheckCopies(F, 2, 1);
     F.gridBooks.Row := 1;
@@ -143,6 +168,8 @@ begin
     CheckCopies(F, 1, 2);
     F.gridBooks.Row := 3;
     CheckCopies(F, 3, 0);
+    Check(F.gridBooks.FieldVisible(12) and (F.gridBooks.PhysicalColumn(12) = 3),
+      'раскладка описания подборки восстановлена');
     Check(F.edtBookInformation.Items.Count = 1, 'история сохранена после переключений');
     Check(F.edtBookSearch.TabOrder < F.edtBookSearchInv.TabOrder, 'начало порядка Tab');
     Check((F.edtBookSearchInv.TabOrder < F.btnBookAdd.TabOrder) and

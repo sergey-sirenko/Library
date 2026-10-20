@@ -9,7 +9,7 @@ uses
   StdCtrls, Grids, Menus, Buttons, ImgList, Spin, LMessages, LCLType, Contnrs, EditBtn,
   uDatabase, uEntities, uTypes, uReports, uEditDialogs, uSelectModelForm, uUIIcons,
   uOpenRouter, uUpdater, uBookSearch, uBookSearchHistory, uOpenRouterModels, uTwoLineCombo,
-  uReportFooter, uReportTotals;
+  uReportFooter, uReportTotals, uHelpView;
 
 type
   { Owner-draw закладок: активная подпись — коричневым (LCL без OnDrawTab). }
@@ -50,6 +50,7 @@ type
     tsJournal: TTabSheet;
     tsCategories: TTabSheet;
     tsLocations: TTabSheet;
+    tsHelp: TTabSheet;
     pnlJournalTop: TPanel;
     btnJournalKeepMonth: TBitBtn;
     pnlBooksTop: TPanel;
@@ -232,6 +233,7 @@ type
     procedure gridOverdueDblClick(Sender: TObject);
   private
     FDB: TLibraryDB;
+    FHelpView: THelpView;
     FReflowingToolbar: Boolean;
     FBookSearch: TBookSearchState;
     FSearchHistory: TBookSearchHistory;
@@ -316,7 +318,10 @@ type
     procedure OpenLoanBook(ALoan: TLoan);
     procedure OpenLoanReader(ALoan: TLoan);
     procedure ApplyLibraryTitle;
+    procedure EnsureHelpView;
+    procedure HelpKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
   public
+    destructor Destroy; override;
     property DB: TLibraryDB read FDB write FDB;
   end;
 
@@ -650,7 +655,10 @@ end;
 procedure TMainForm.SetDeletedColumnVisible(G: TLibraryGrid; AVisible: Boolean);
 begin
   if (G = nil) or (DeletedGridIndex(G) < 0) then Exit;
-  G.SetFieldAllowed(G.ColCount - 1, AVisible);
+  if G = gridBooks then
+    G.SetFieldAllowed(G.ColCount - 2, AVisible)
+  else
+    G.SetFieldAllowed(G.ColCount - 1, AVisible);
 end;
 
 procedure TMainForm.UpdateDeletedColumnVisibility;
@@ -913,7 +921,9 @@ var
       if I > DATA_FIRST_COL then
         S := S + ',';
       W := G.ColWidths[I];
-      if (I = G.ColCount - 1) and (DeletedIndex >= 0) then
+      if (DeletedIndex >= 0) and
+        (((G = gridBooks) and (I = G.ColCount - 2)) or
+         ((G <> gridBooks) and (I = G.ColCount - 1))) then
       begin
         if W >= 40 then
           FDeletedColumnWidths[DeletedIndex] := W
@@ -1342,6 +1352,11 @@ end;
 
 procedure TMainForm.FormCreate(Sender: TObject);
 begin
+  tsHelp := TTabSheet.Create(Self);
+  tsHelp.Name := 'tsHelp';
+  tsHelp.Caption := 'Справка';
+  tsHelp.PageControl := pcMain;
+  Application.AddOnKeyDownBeforeHandler(@HelpKeyDown);
   FBookSearch := TBookSearchState.Create;
   FNormalBookSort := DATA_FIRST_COL;
   Caption := ApplicationWindowTitle('');
@@ -1373,7 +1388,10 @@ begin
   TButtonShortcuts.ForForm(Self).Bind(btnCopyAdd, bsAdd, [pnlCopiesBottom]);
   TButtonShortcuts.ForForm(Self).Bind(btnCopyEdit, bsEdit, [pnlCopiesBottom]);
   TButtonShortcuts.ForForm(Self).Bind(btnCopyDelete, bsDelete, [pnlCopiesBottom]);
-  SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
+  SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён', 'Описание']);
+  gridBooks.ColWidths[8] := 300;
+  gridBooks.SetFieldDefaultVisible(8, False);
+  gridBooks.CaptureDefaults;
   gridBooks.OnDblClick := @btnBookEditClick;
   edtBookSearch.Hint := 'Поиск по названию, автору или ISBN';
   edtBookSearchInv.Hint := 'Поиск по полному инвентарному номеру экземпляра';
@@ -1500,6 +1518,7 @@ begin
   tsSettings.ImageIndex := icoSettings;
   tsBackup.ImageIndex := icoBackup;
   tsJournal.ImageIndex := icoJournal;
+  tsHelp.ImageIndex := icoHelp;
 
   ApplyButtonIcon(btnBookSearch, icoSearch);
   ApplyButtonIcon(btnBookAdd, icoAdd);
@@ -1714,16 +1733,19 @@ begin
   if AForAI then
   begin
     SetupGrid(gridBooks, ['Место в подборке', 'Название', 'Автор', 'Издательство',
-      'Категория', 'Год', 'ISBN', 'Соответствие', 'Обоснование', 'Где искать в книге', 'Удалён']);
+      'Категория', 'Год', 'ISBN', 'Соответствие', 'Обоснование', 'Где искать в книге', 'Удалён', 'Описание']);
     LayoutName := 'BooksAISearch';
     gridBooks.ColWidths[9] := 300;
     gridBooks.ColWidths[10] := 300;
   end
   else
   begin
-    SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён']);
+    SetupGrid(gridBooks, ['Название', 'Автор', 'Издательство', 'Категория', 'Год', 'ISBN', 'Удалён', 'Описание']);
     LayoutName := 'Books';
   end;
+  gridBooks.ColWidths[gridBooks.ColCount - 1] := 300;
+  gridBooks.SetFieldDefaultVisible(gridBooks.ColCount - 1, False);
+  gridBooks.CaptureDefaults;
   gridBooks.Configure(FDB.Paths.UserLayoutFile,
     'User.' + IntToStr(FDB.CurrentUser.ID) + '.' + LayoutName, 1, @GridSorted);
   FBookAISchema := AForAI;
@@ -1770,7 +1792,8 @@ begin
       gridBooks.Cells[DATA_FIRST_COL + Offset + 3, I + 1] := CatName;
       gridBooks.Cells[DATA_FIRST_COL + Offset + 4, I + 1] := IntToStr(B.Year);
       gridBooks.Cells[DATA_FIRST_COL + Offset + 5, I + 1] := B.ISBN;
-      gridBooks.Cells[gridBooks.ColCount - 1, I + 1] := BoolToStr(B.Deleted, 'да', '');
+      gridBooks.Cells[gridBooks.ColCount - 2, I + 1] := BoolToStr(B.Deleted, 'да', '');
+      gridBooks.Cells[gridBooks.ColCount - 1, I + 1] := B.Description;
       gridBooks.Objects[0, I + 1] := B;
       if FBookSearch.Active then
       begin
@@ -2476,6 +2499,7 @@ begin
   Sz := ClampUIFontSize(FDB.Settings.UIFontSize);
   Screen.SystemFont.Size := Sz;
   Font.Size := Sz;
+  if FHelpView <> nil then FHelpView.ApplyFontSize(Sz);
   TextH := Canvas.TextHeight('Ag');
 
   pcMain.MultiLine := True;
@@ -3923,10 +3947,36 @@ begin
     mtInformation, [mbOK], 0);
 end;
 
+destructor TMainForm.Destroy;
+begin
+  Application.RemoveOnKeyDownBeforeHandler(@HelpKeyDown);
+  inherited Destroy;
+end;
+
+procedure TMainForm.EnsureHelpView;
+begin
+  if FHelpView <> nil then Exit;
+  FHelpView := THelpView.Create(tsHelp);
+  FHelpView.Parent := tsHelp;
+  FHelpView.ApplyFontSize(Font.Size);
+end;
+
+procedure TMainForm.HelpKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if (Key <> VK_F1) or (Shift <> []) or
+    (Screen.ActiveCustomForm <> Self) or (Application.ModalLevel <> 0) or
+    not Enabled or not Visible then Exit;
+  Key := 0;
+  EnsureHelpView;
+  pcMain.ActivePage := tsHelp;
+  FHelpView.FocusNavigation;
+end;
+
 procedure TMainForm.pcMainChange(Sender: TObject);
 begin
   pcMain.Invalidate;
-  if pcMain.ActivePage = tsOverdue then RefreshOverdue
+  if pcMain.ActivePage = tsHelp then EnsureHelpView
+  else if pcMain.ActivePage = tsOverdue then RefreshOverdue
   else if pcMain.ActivePage = tsJournal then RefreshJournal
   else if pcMain.ActivePage = tsBackup then RefreshBackups;
 end;
