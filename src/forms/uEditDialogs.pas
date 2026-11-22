@@ -871,10 +871,12 @@ var
   NewUser: TUser;
   Ok: Boolean;
 begin
-  if cbRole.ItemIndex = 1 then
-    Role := urAdmin
+  case cbRole.ItemIndex of
+    1: Role := urAdmin;
+    2: Role := urReadOnly;
   else
     Role := urLibrarian;
+  end;
   if User = nil then
   begin
     NewUser := DB.AddUser(eLogin.Text, eDisplay.Text, ePass.Text, Role, Err);
@@ -1365,6 +1367,7 @@ begin
     InputCombo(F, 'Роль', Y, FW, cbRole);
     cbRole.Items.Add('Библиотекарь');
     cbRole.Items.Add('Администратор');
+    cbRole.Items.Add(RoleToStr(urReadOnly));
     cbRole.ItemIndex := 0;
     H := FieldHeight(F);
     chkActive := TCheckBox.Create(F);
@@ -1390,8 +1393,10 @@ begin
       eLogin.Text := AUser.Login;
       eLogin.ReadOnly := True;
       eDisplay.Text := AUser.DisplayName;
-      if AUser.Role = urAdmin then
-        cbRole.ItemIndex := 1;
+      case AUser.Role of
+        urAdmin: cbRole.ItemIndex := 1;
+        urReadOnly: cbRole.ItemIndex := 2;
+      end;
       chkActive.Checked := AUser.Active;
     end;
     if F.ShowModal <> mrOK then

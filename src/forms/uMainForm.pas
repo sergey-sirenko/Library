@@ -95,11 +95,13 @@ type
     gridLoans: TLibraryGrid;
     gridOverdue: TLibraryGrid;
     pnlReports: TPanel;
-    cbReport: TComboBox;
+    cbReport, cbReportReader: TComboBox;
+    lblReportReader: TLabel;
     pnlReportStats, pnlReportFilters: TPanel;
     lblReportFrom, lblReportTo, lblReportSummary: TLabel;
     edtReportFrom, edtReportTo: TDateEdit;
     cbReportStatsView: TComboBox;
+    chkReportDetailed: TCheckBox;
     btnReportShow: TBitBtn;
     btnReportSave: TBitBtn;
     gridReport: TLibraryGrid;
@@ -194,6 +196,8 @@ type
     procedure btnReportShowClick(Sender: TObject);
     procedure btnReportSaveClick(Sender: TObject);
     procedure ReportParametersChange(Sender: TObject);
+    procedure ReportReaderChange(Sender: TObject);
+    procedure ReportDetailChange(Sender: TObject);
     procedure ReportFiltersResize(Sender: TObject);
     procedure ReportViewChanged(Sender: TObject);
     procedure btnUserAddClick(Sender: TObject);
@@ -248,7 +252,9 @@ type
     FReportLines: TStringList;
     FReportFooter: TReportFooter;
     FReportStatsSummary: TLoanStatisticsSummary;
-    FReportStatsFrom, FReportStatsTo: TDateTime;
+    FReportFrom, FReportTo: TDateTime;
+    FReportReaderID: TId;
+    FUpdatingReportReaders: Boolean;
     FIcons: TImageList;
     FLoanIssuedCol: Integer;
     FLoanDueCol: Integer;
@@ -308,6 +314,8 @@ type
     procedure GridHeaderSized(Sender: TObject; IsColumn: Boolean; Index: Integer);
     procedure GridPrepareCanvas(Sender: TObject; aCol, aRow: Integer;
       aState: TGridDrawState);
+    procedure RefreshReportReaders;
+    function ReportUniqueReaders: Integer;
     procedure ShowReportTable(ALines: TStrings);
     function CommitLoanDateCell(aCol, aRow: Integer; const AText: string;
       out ANormalized: string; out AError: string): Boolean;
@@ -340,6 +348,8 @@ const
   ACTIVE_MARKER_COL = 0;
   DATA_FIRST_COL = 1;
   REPORT_FIRST_DATA_COL = DATA_FIRST_COL + 1;
+  REPORT_READER_HISTORY = 10;
+  REPORT_PERIOD_TOTALS = 11;
   ACTIVE_MARKER_WIDTH = 24;
   ACTIVE_MARKER = '▶';
   { RGB(139,69,19) — коричневый для подписи активной закладки }
@@ -1146,6 +1156,8 @@ var
   D: TDateTime;
   Title, Err: string;
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   Row := gridLoans.Row;
   if AForceCol >= 0 then
     Col := AForceCol
@@ -1246,7 +1258,8 @@ begin
   aCol := gridLoans.LogicalColumn(aCol);
   CanSelect := True;
   AllowEdit := False;
-  if (aRow > 0) and ((aCol = FLoanDueCol) or (aCol = FLoanIssuedCol)) then
+  if ((FDB = nil) or not FDB.ReadOnlyRole) and (aRow > 0) and
+    ((aCol = FLoanDueCol) or (aCol = FLoanIssuedCol)) then
   begin
     L := TLoan(gridLoans.Objects[0, aRow]);
     AllowEdit := (L <> nil) and (not L.Deleted) and (L.State = lsLoaned);
@@ -1315,6 +1328,8 @@ end;
 
 procedure TMainForm.gridLoansDblClick(Sender: TObject);
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   if gridLoans.Col = DATA_FIRST_COL then
     OpenLoanCopy(SelectedLoan)
   else if gridLoans.Col = DATA_FIRST_COL + 1 then
@@ -1327,6 +1342,8 @@ end;
 
 procedure TMainForm.gridOverdueDblClick(Sender: TObject);
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   if gridOverdue.Col = DATA_FIRST_COL then
     OpenLoanCopy(SelectedOverdue)
   else if gridOverdue.Col = DATA_FIRST_COL + 1 then
@@ -1337,6 +1354,8 @@ end;
 
 procedure TMainForm.gridLoansKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   if (Key = VK_F2) or (Key = VK_RETURN) then
     if (gridLoans.Col = FLoanIssuedCol) or (gridLoans.Col = FLoanDueCol) then
     begin
@@ -1457,6 +1476,8 @@ begin
   cbReport.Items.Add('Список читателей');
   cbReport.Items.Add('Журнал действий');
   cbReport.Items.Add('Статистика выдач');
+  cbReport.Items.Add('Электронный формуляр');
+  cbReport.Items.Add('Итоговый отчёт за период');
   cbReport.ItemIndex := 0;
   cbReportStatsView.Items.Add('По книгам');
   cbReportStatsView.Items.Add('По категориям');
@@ -1565,6 +1586,8 @@ procedure TMainForm.btnBookActionsClick(Sender: TObject);
 var
   P: TPoint;
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   P := btnBookActions.ClientToScreen(Point(0, btnBookActions.Height));
   pmBookActions.Popup(P.X, P.Y);
 end;
@@ -1642,9 +1665,10 @@ procedure TMainForm.FormShow(Sender: TObject);
 begin
   FReports := TReportService.Create(FDB);
   LoadModelPriceCache(ModelPriceCacheFile, FPriceModels, FPriceUpdatedAt);
-  ReloadSearchHistory;
-  ApplyUIFontSize;
+  if not FDB.ReadOnlyRole then
+    ReloadSearchHistory;
   ApplyRoleUI;
+  ApplyUIFontSize;
   LoadGridLayouts;
   gridBooks.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Books', 1, @GridSorted);
   gridCopies.Configure(FDB.Paths.UserLayoutFile, 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Copies', 1, @GridSorted);
@@ -1685,12 +1709,46 @@ end;
 
 procedure TMainForm.ApplyRoleUI;
 var
-  IsAdmin: Boolean;
+  IsAdmin, Limited: Boolean;
 begin
   IsAdmin := (FDB.CurrentUser <> nil) and (FDB.CurrentUser.Role = urAdmin);
+  Limited := FDB.ReadOnlyRole;
+  if Limited and (pcMain.ActivePage <> tsBooks) and
+    (pcMain.ActivePage <> tsReaders) and (pcMain.ActivePage <> tsLoans) then
+    pcMain.ActivePage := tsBooks;
   tsUsers.TabVisible := IsAdmin;
   tsJournal.TabVisible := IsAdmin;
   tsSettings.TabVisible := IsAdmin;
+  tsOverdue.TabVisible := not Limited;
+  tsCategories.TabVisible := not Limited;
+  tsLocations.TabVisible := not Limited;
+  tsReports.TabVisible := not Limited;
+  tsBackup.TabVisible := not Limited;
+  tsHelp.TabVisible := not Limited;
+
+  btnBookAdd.Visible := not Limited;
+  btnBookActions.Visible := not Limited;
+  miBookEdit.Visible := not Limited;
+  miBookCopy.Visible := not Limited;
+  miBookDelete.Visible := not Limited;
+  miBookRestore.Visible := not Limited;
+  edtBookInformation.Visible := not Limited;
+  btnCopyAdd.Visible := not Limited;
+  btnCopyEdit.Visible := not Limited;
+  btnCopyDelete.Visible := not Limited;
+  btnReaderEdit.Visible := not Limited;
+  btnReaderDelete.Visible := not Limited;
+  btnReaderRestore.Visible := not Limited;
+  btnLoanRenew.Visible := not Limited;
+  btnLoanDate.Visible := not Limited;
+
+  if Limited then
+  begin
+    gridBooks.OnDblClick := nil;
+    gridCopies.OnDblClick := nil;
+    gridReaders.OnDblClick := nil;
+    gridLoans.Options := gridLoans.Options - [goEditing];
+  end;
 end;
 
 procedure TMainForm.RefreshAll;
@@ -2245,6 +2303,8 @@ end;
 procedure TMainForm.ClearBookSearchHistoryClick(Sender: TObject);
 var Err: string;
 begin
+  if FDB.ReadOnlyRole then
+    Exit;
   if MessageDlg('Удалить всю историю поиска и сохранённые результаты текущего пользователя?',
     mtConfirmation, [mbYes, mbNo], 0) <> mrYes then Exit;
   // Сначала убираем ссылки из элементов списка; при ошибке записи список восстановится.
@@ -2533,7 +2593,8 @@ begin
   RecalcGridRowHeights(gridCategories);
   RecalcGridRowHeights(gridLocations);
   RecalcGridRowHeights(gridReport);
-  if FReportFooter <> nil then FReportFooter.UpdateTotals(FReportLines);
+  if FReportFooter <> nil then
+    FReportFooter.UpdateTotals(FReportLines, ReportUniqueReaders);
 end;
 
 procedure TMainForm.RefreshBackups;
@@ -2752,7 +2813,7 @@ var
   Progress: TUpdateProgressForm;
 begin
   if FBookSearchRunning then Exit;
-  if Trim(edtBookInformation.Text) = '' then
+  if FDB.ReadOnlyRole or (Trim(edtBookInformation.Text) = '') then
   begin
     RefreshBooks;
     Exit;
@@ -3336,6 +3397,14 @@ begin
   end;
 end;
 
+function TMainForm.ReportUniqueReaders: Integer;
+begin
+  if cbReport.ItemIndex = 9 then
+    Result := FReportStatsSummary.Readers
+  else
+    Result := NO_UNIQUE_READER_TOTAL;
+end;
+
 procedure TMainForm.ShowReportTable(ALines: TStrings);
 var
   Parts: TStringList;
@@ -3386,10 +3455,16 @@ begin
   end;
   LayoutKey := 'User.' + IntToStr(FDB.CurrentUser.ID) + '.Report.' + IntToStr(cbReport.ItemIndex);
   if cbReport.ItemIndex = 9 then LayoutKey := LayoutKey + '.Statistics.' + IntToStr(cbReportStatsView.ItemIndex);
+  if cbReport.ItemIndex = REPORT_PERIOD_TOTALS then
+    gridReport.ColWidths[REPORT_FIRST_DATA_COL] := Max(260,
+      gridReport.Canvas.TextWidth('Итого возвращено книг') + 24);
   gridReport.Configure(FDB.Paths.UserLayoutFile, LayoutKey, 1, @GridSorted);
+  GridSorting(gridReport).Disabled := cbReport.ItemIndex = REPORT_PERIOD_TOTALS;
   ApplyGridSorting(gridReport);
+  if cbReport.ItemIndex = REPORT_PERIOD_TOTALS then
+    RecalcGridRowHeights(gridReport);
   UpdateGridActiveMarker(gridReport);
-  FReportFooter.UpdateTotals(FReportLines);
+  FReportFooter.UpdateTotals(FReportLines, ReportUniqueReaders);
   btnReportSave.Enabled := True;
 end;
 
@@ -3410,9 +3485,59 @@ begin
     Max(Canvas.TextHeight('Ag') * 2, CalcRect.Bottom - CalcRect.Top) + 16;
 end;
 
+procedure TMainForm.RefreshReportReaders;
+var
+  I: Integer;
+  R: TReader;
+begin
+  FUpdatingReportReaders := True;
+  cbReportReader.Items.BeginUpdate;
+  try
+    cbReportReader.Items.Clear;
+    for I := 0 to FDB.Readers.Count - 1 do
+    begin
+      R := TReader(FDB.Readers[I]);
+      if not R.Deleted then
+        cbReportReader.Items.AddObject(R.FullName + ' (ID ' + IntToStr(R.ID) + ')', R);
+    end;
+    cbReportReader.ItemIndex := cbReportReader.Items.IndexOfObject(FDB.FindReader(FReportReaderID));
+    if cbReportReader.ItemIndex < 0 then
+      FReportReaderID := 0;
+  finally
+    cbReportReader.Items.EndUpdate;
+    FUpdatingReportReaders := False;
+  end;
+end;
+
+procedure TMainForm.ReportReaderChange(Sender: TObject);
+begin
+  if FUpdatingReportReaders then
+    Exit;
+  if cbReportReader.ItemIndex >= 0 then
+    FReportReaderID := TReader(cbReportReader.Items.Objects[cbReportReader.ItemIndex]).ID
+  else
+    FReportReaderID := 0;
+  ReportParametersChange(Sender);
+end;
+
+procedure TMainForm.ReportDetailChange(Sender: TObject);
+begin
+  if (cbReport.ItemIndex = REPORT_PERIOD_TOTALS) and (FReportLines <> nil) and
+    (FReportLines.Count > 0) then
+    btnReportShowClick(Sender);
+end;
+
 procedure TMainForm.ReportParametersChange(Sender: TObject);
 begin
-  pnlReportStats.Visible := cbReport.ItemIndex = 9;
+  cbReportStatsView.Visible := cbReport.ItemIndex = 9;
+  chkReportDetailed.Visible := cbReport.ItemIndex = REPORT_PERIOD_TOTALS;
+  pnlReportStats.Visible := cbReportStatsView.Visible or chkReportDetailed.Visible;
+  cbReportReader.Visible := cbReport.ItemIndex = REPORT_READER_HISTORY;
+  lblReportReader.Visible := cbReportReader.Visible;
+  if cbReportReader.Visible and (Sender = cbReport) then
+    RefreshReportReaders;
+  if Sender = cbReport then
+    ReflowToolbarPanel(pnlReports);
   if FReportLines <> nil then FReportLines.Clear;
   FReportFooter.UpdateTotals(nil);
   gridReport.BeginSchema;
@@ -3430,9 +3555,21 @@ var
   SL: TStringList;
   FS: TFormatSettings;
   AFrom, ATo: TDateTime;
+  Reader: TReader;
 begin
   SL := nil;
-  if cbReport.ItemIndex = 9 then
+  Reader := nil;
+  if cbReport.ItemIndex = REPORT_READER_HISTORY then
+  begin
+    Reader := FDB.FindReader(FReportReaderID);
+    if (Reader = nil) or Reader.Deleted then
+    begin
+      MessageDlg('Выберите читателя.', mtInformation, [mbOK], 0);
+      cbReportReader.SetFocus;
+      Exit;
+    end;
+  end;
+  if cbReport.ItemIndex in [9, REPORT_PERIOD_TOTALS] then
   begin
     FS := DefaultFormatSettings;
     FS.ShortDateFormat := 'dd.mm.yyyy';
@@ -3448,8 +3585,8 @@ begin
       MessageDlg('Дата начала периода позже даты окончания.', mtWarning, [mbOK], 0);
       Exit;
     end;
-    FReportStatsFrom := AFrom;
-    FReportStatsTo := ATo;
+    FReportFrom := AFrom;
+    FReportTo := ATo;
   end;
   case cbReport.ItemIndex of
     0: SL := FReports.BooksCatalog;
@@ -3462,6 +3599,8 @@ begin
     7: SL := FReports.ReadersList;
     8: SL := FReports.ActionsLog(0, 0);
     9: SL := FReports.LoansStatistics(AFrom, ATo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
+    REPORT_READER_HISTORY: SL := FReports.ReaderHistory(Reader);
+    REPORT_PERIOD_TOTALS: SL := FReports.PeriodTotals(AFrom, ATo, chkReportDetailed.Checked);
   end;
   if SL <> nil then
   try
@@ -3478,6 +3617,12 @@ begin
         lblReportSummary.Caption := lblReportSummary.Caption + LineEnding +
           'Не удалось связать с книгой (не включены): ' + IntToStr(FReportStatsSummary.UnlinkedLoans) + '.';
       ReportFiltersResize(nil);
+    end
+    else if cbReport.ItemIndex = REPORT_PERIOD_TOTALS then
+    begin
+      lblReportSummary.Caption := Format('С %s по %s включительно.',
+        [FormatDateRu(AFrom), FormatDateRu(ATo)]);
+      ReportFiltersResize(nil);
     end;
   finally
     SL.Free;
@@ -3487,7 +3632,7 @@ end;
 procedure TMainForm.btnReportSaveClick(Sender: TObject);
 var
   SD: TSaveDialog;
-  ExportLines, StatisticsLines: TStringList;
+  ExportLines, ReportLines: TStringList;
 begin
   if (FReportLines = nil) or (FReportLines.Count = 0) then
     btnReportShowClick(Sender);
@@ -3496,18 +3641,29 @@ begin
   try
     SD.Filter := 'CSV|*.csv|Текст|*.txt';
     SD.DefaultExt := 'csv';
-    if cbReport.ItemIndex = 9 then SD.FileName := 'Статистика_выдач.csv';
+    case cbReport.ItemIndex of
+      9: SD.FileName := 'Статистика_выдач.csv';
+      REPORT_READER_HISTORY: SD.FileName := 'Электронный_формуляр.csv';
+      REPORT_PERIOD_TOTALS: SD.FileName := 'Итоговый_отчёт_за_период.csv';
+    end;
     if SD.Execute then
     begin
       ExportLines := nil;
       try
-        ExportLines := ReportWithTotals(FReportLines);
-        if cbReport.ItemIndex = 9 then
+        ExportLines := ReportWithTotals(FReportLines, ReportUniqueReaders);
+        ReportLines := nil;
+        case cbReport.ItemIndex of
+          9: ReportLines := FReports.LoansStatisticsExport(ExportLines, FReportFrom,
+            FReportTo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
+          REPORT_READER_HISTORY: ReportLines := FReports.ReaderHistoryExport(ExportLines,
+            FDB.FindReader(FReportReaderID));
+          REPORT_PERIOD_TOTALS: ReportLines := FReports.PeriodTotalsExport(ExportLines,
+            FReportFrom, FReportTo);
+        end;
+        if ReportLines <> nil then
         begin
-          StatisticsLines := FReports.LoansStatisticsExport(ExportLines, FReportStatsFrom,
-            FReportStatsTo, cbReportStatsView.ItemIndex = 1, FReportStatsSummary);
           ExportLines.Free;
-          ExportLines := StatisticsLines;
+          ExportLines := ReportLines;
         end;
         ExportLines.SaveToFile(SD.FileName);
       except
@@ -3541,6 +3697,14 @@ begin
   if U = nil then Exit;
   if EditUserDialog(FDB, U, ID) then
   begin
+    if FDB.ReadOnlyRole then
+    begin
+      edtBookInformation.Text := '';
+      ApplyRoleUI;
+      ApplyUIFontSize;
+      RefreshBooks;
+      Exit;
+    end;
     RefreshUsers;
     SelectGridEntity(gridUsers, ID, True);
   end;
@@ -3828,6 +3992,7 @@ begin
   Dir := FDB.Paths.BackupDir + lstBackups.Items[lstBackups.ItemIndex];
   if FDB.RestoreBackup(Dir, Err) then
   begin
+    FReportReaderID := 0;
     ReloadSearchHistory;
     MessageDlg('Данные, обложки и настройки восстановлены.' +
       LineEnding + 'Для аварийной замены файлов программы используйте ' +
@@ -3966,6 +4131,8 @@ begin
   if (Key <> VK_F1) or (Shift <> []) or
     (Screen.ActiveCustomForm <> Self) or (Application.ModalLevel <> 0) or
     not Enabled or not Visible then Exit;
+  if (FDB = nil) or FDB.ReadOnlyRole then
+    Exit;
   Key := 0;
   EnsureHelpView;
   pcMain.ActivePage := tsHelp;
@@ -3978,7 +4145,9 @@ begin
   if pcMain.ActivePage = tsHelp then EnsureHelpView
   else if pcMain.ActivePage = tsOverdue then RefreshOverdue
   else if pcMain.ActivePage = tsJournal then RefreshJournal
-  else if pcMain.ActivePage = tsBackup then RefreshBackups;
+  else if pcMain.ActivePage = tsBackup then RefreshBackups
+  else if (pcMain.ActivePage = tsReports) and (cbReport.ItemIndex = REPORT_READER_HISTORY) then
+    ReportParametersChange(cbReport);
 end;
 
 procedure TMainForm.chkShowDeletedChange(Sender: TObject);

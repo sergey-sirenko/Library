@@ -536,6 +536,30 @@ object MainForm: TMainForm
           OnClick = btnReportSaveClick
           TabOrder = 2
         end
+        object lblReportReader: TLabel
+          Left = 610
+          Height = 28
+          Top = 8
+          Width = 82
+          AutoSize = False
+          Caption = 'Читатель'
+          FocusControl = cbReportReader
+          Layout = tlCenter
+          Visible = False
+        end
+        object cbReportReader: TComboBox
+          Left = 700
+          Height = 28
+          Top = 8
+          Width = 320
+          Hint = 'Читатель для электронного формуляра'
+          ShowHint = True
+          Sorted = True
+          Style = csDropDownList
+          TabOrder = 3
+          Visible = False
+          OnChange = ReportReaderChange
+        end
       end
       object pnlReportStats: TPanel
         Left = 0
@@ -591,6 +615,16 @@ object MainForm: TMainForm
             Height = 28
             Style = csDropDownList
             TabOrder = 2
+          end
+          object chkReportDetailed: TCheckBox
+            Left = 420
+            Top = 8
+            Width = 124
+            Height = 28
+            Caption = 'Подробно'
+            TabOrder = 3
+            Visible = False
+            OnChange = ReportDetailChange
           end
         end
         object lblReportSummary: TLabel

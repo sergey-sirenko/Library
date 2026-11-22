@@ -399,6 +399,51 @@ begin
   Result.CategoryName := ACategory;
 end;
 
+procedure TestReadOnlyRole(DB: TLibraryDB);
+var
+  Err: string;
+  CopyItem: TCopy;
+  Reader: TReader;
+  Loan: TLoan;
+begin
+  Check(DB.AddUser('circulation-test', 'Тестовая учётная запись', 'local-test', urReadOnly, Err) <> nil,
+    'администратор назначает роль «Только чтение»');
+  DB.Close;
+  if not DB.Open(Err) then
+  begin
+    Check(False, 'повторное открытие тестовой базы: ' + Err);
+    Exit;
+  end;
+  if not DB.Login('circulation-test', 'local-test', Err) then
+  begin
+    Check(False, 'вход под ролью «Только чтение»: ' + Err);
+    Exit;
+  end;
+  Check(DB.ReadOnlyRole, 'роль «Только чтение» сохраняется после повторного открытия');
+  Check(DB.AddCategory('Запрещённая категория', '', '', Err) = nil,
+    'ограниченная роль не создаёт категории');
+  Check(DB.AddUser('forbidden', '', 'local-test', urAdmin, Err) = nil,
+    'ограниченная роль не создаёт пользователей');
+
+  Reader := DB.AddReader('Тестовый читатель', '', '', '', '', 0, Err);
+  Check(Reader <> nil, 'ограниченная роль регистрирует читателя: ' + Err);
+  if Reader = nil then
+    Exit;
+  CopyItem := DB.FindCopyByInv('301');
+  Check(CopyItem <> nil, 'доступен ранее созданный экземпляр');
+  if CopyItem = nil then
+    Exit;
+  Loan := DB.IssueLoan(CopyItem.ID, Reader.ID, '', Err);
+  Check((Loan <> nil) and (CopyItem.Status = csLoaned), 'ограниченная роль оформляет выдачу: ' + Err);
+  if Loan = nil then
+    Exit;
+  Check(not DB.RenewLoan(Loan, Err), 'ограниченная роль не продлевает выдачу');
+  Check(not DB.UpdateLoanDueDate(Loan, Loan.DueAt + 1, Err), 'ограниченная роль не меняет дату');
+  Check(DB.ReturnLoan(Loan, '', Err) and (Loan.State = lsReturned) and
+    (CopyItem.Status = csAvailable), 'ограниченная роль оформляет возврат: ' + Err);
+  Check(not DB.DeleteReader(Reader, Err), 'ограниченная роль не удаляет читателя');
+end;
+
 procedure TestDatabaseImport;
 var
   RootDir, Err: string;
@@ -416,8 +461,20 @@ begin
   try
     Check(DB.Open(Err), 'тестовая база открывается: ' + Err);
     Check(DB.Login('admin', 'admin', Err), 'вход в тестовую базу: ' + Err);
-    ExistingCategory := DB.AddCategory('Богословие', '', '', Err);
-    Check(ExistingCategory <> nil, 'создаётся исходная категория: ' + Err);
+    ExistingCategory := DB.AddCategory('Богословие', ' Ш.01.М. ', '', Err);
+    Check(ExistingCategory <> nil, 'создаётся категория с кириллическим шифром: ' + Err);
+    if ExistingCategory = nil then
+      Exit;
+    CheckEqual('Ш.01.М.', ExistingCategory.Code, 'шифр сохраняется без пробелов по краям');
+    Check(DB.UpdateCategory(ExistingCategory, ExistingCategory.Name, 'Ёж-Az09.яё', '', Err),
+      'при редактировании допускаются ё, кириллица, латиница, цифры, дефис и точка');
+    Check(not DB.UpdateCategory(ExistingCategory, ExistingCategory.Name, 'Ш/01', '', Err) and
+      (Pos('«/»', Err) > 0), 'недопустимый ASCII-символ указан в ошибке');
+    Check(not DB.UpdateCategory(ExistingCategory, ExistingCategory.Name, 'Ш漢', '', Err) and
+      (Pos('«漢»', Err) > 0), 'недопустимый символ UTF-8 показан целиком');
+    CheckEqual('Ёж-Az09.яё', ExistingCategory.Code, 'отклонённые правки сохраняют прежний шифр');
+    Check(DB.UpdateCategory(ExistingCategory, ExistingCategory.Name, '', '', Err),
+      'шифр можно очистить');
     InitialCategoryCount := DB.Categories.Count;
     Items := TObjectList.Create(True);
     try
@@ -473,6 +530,7 @@ begin
     finally
       Items.Free;
     end;
+    TestReadOnlyRole(DB);
   finally
     DB.Free;
     DeleteDirectory(RootDir, False);

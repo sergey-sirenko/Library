@@ -79,6 +79,9 @@ type
       const ADesc, ABefore, AAfter: string);
     procedure LoadActions;
     procedure SaveActions;
+    function IsReadOnly: Boolean;
+    function RequireFullAccess(out AError: string): Boolean;
+    function CreateBackupInternal(out APath, AError: string): Boolean;
     function ActiveAdminCount: Integer;
     function ReaderActiveLoans(AReaderID: TId): Integer;
     function BookHasLoanedCopies(ABookID: TId): Boolean;
@@ -190,6 +193,7 @@ type
     property Actions: TObjectList read FActions;
     property Settings: TSettings read FSettings;
     property CurrentUser: TUser read FCurrentUser;
+    property ReadOnlyRole: Boolean read IsReadOnly;
     property Restoring: Boolean read FRestoring;
     property TechLog: TTechLog read FLog;
   end;
@@ -1279,7 +1283,8 @@ var
 begin
   Result := False;
   ADeletedCount := 0;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   for i := FActions.Count - 1 downto 0 do
   begin
     A := TActionLogItem(FActions[i]);
@@ -1581,6 +1586,20 @@ begin
   Result := FindCopyByInventory(AInv, 0);
 end;
 
+function TLibraryDB.IsReadOnly: Boolean;
+begin
+  Result := (FCurrentUser <> nil) and (FCurrentUser.Role = urReadOnly);
+end;
+
+function TLibraryDB.RequireFullAccess(out AError: string): Boolean;
+begin
+  Result := not ReadOnlyRole;
+  if Result then
+    AError := ''
+  else
+    AError := 'Операция недоступна для роли «Только чтение».';
+end;
+
 function TLibraryDB.ActiveAdminCount: Integer;
 var
   I: Integer;
@@ -1665,6 +1684,8 @@ var
   Ext, Dest: string;
 begin
   Result := '';
+  if ReadOnlyRole then
+    Exit;
   if (ASource = '') or (not FileExists(ASource)) then
     Exit;
   Ext := LowerCase(ExtractFileExt(ASource));
@@ -1684,30 +1705,37 @@ end;
 
 function IsValidCategoryCode(const S: string; out AError: string): Boolean;
 var
-  I: Integer;
-  Ch: Char;
+  I, CodepointLen: Integer;
+  Codepoint: Cardinal;
+  InvalidCharacter: string;
 begin
-  Result := True;
   AError := '';
-  if S = '' then
-    Exit; { Шифр необязательный. }
-  for I := 1 to Length(S) do
+  if FindInvalidUTF8Codepoint(PChar(S), Length(S)) >= 0 then
   begin
-    Ch := S[I];
-    if not (((Ch >= 'A') and (Ch <= 'Z')) or
-            ((Ch >= 'a') and (Ch <= 'z')) or
-            ((Ch >= '0') and (Ch <= '9')) or
-            ((Ch >= 'А') and (Ch <= 'Я')) or
-            ((Ch >= 'а') and (Ch <= 'я')) or
-            (Ch = 'Ё') or (Ch = 'ё') or
-            (Ch = '-') or (Ch = '.')) then
-    begin
-      AError := 'Шифр содержит недопустимый символ: «' + Ch + '». ' +
+    AError := 'Шифр содержит некорректную последовательность UTF-8.';
+    Exit(False);
+  end;
+
+  I := 1;
+  while I <= Length(S) do
+  begin
+    Codepoint := UTF8CodepointToUnicode(@S[I], CodepointLen);
+    case Codepoint of
+      Ord('A')..Ord('Z'), Ord('a')..Ord('z'), Ord('0')..Ord('9'),
+      $0410..$044F, $0401, $0451, { А–Я, а–я, Ё, ё }
+      Ord('-'), Ord('.'):
+        Inc(I, CodepointLen);
+    else
+      if (Codepoint < 32) or (Codepoint = 127) then
+        InvalidCharacter := 'U+' + IntToHex(Codepoint, 4)
+      else
+        InvalidCharacter := Copy(S, I, CodepointLen);
+      AError := 'Шифр содержит недопустимый символ: «' + InvalidCharacter + '». ' +
         'Допускаются латиница, кириллица, цифры, дефис и точка.';
-      Result := False;
-      Exit;
+      Exit(False);
     end;
   end;
+  Result := True;
 end;
 
 function TLibraryDB.AddCategory(const AName, ACode, ADesc: string; out AError: string): TCategory;
@@ -1717,7 +1745,8 @@ var
   CleanCode: string;
 begin
   Result := nil;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if Trim(AName) = '' then
   begin
     AError := 'Укажите наименование категории.';
@@ -1754,7 +1783,8 @@ var
   Before, CleanCode: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACat = nil then
   begin
     AError := 'Категория не найдена.';
@@ -1785,7 +1815,8 @@ end;
 function TLibraryDB.DeleteCategory(ACat: TCategory; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACat = nil then
   begin
     AError := 'Категория не найдена.';
@@ -1810,7 +1841,8 @@ end;
 function TLibraryDB.RestoreCategory(ACat: TCategory; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACat = nil then Exit;
   ACat.Deleted := False;
   ACat.DeletedAt := 0;
@@ -1827,7 +1859,8 @@ var
   L: TLocation;
 begin
   Result := nil;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if Trim(AName) = '' then
   begin
     AError := 'Укажите наименование места хранения.';
@@ -1860,7 +1893,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ALoc = nil then
   begin
     AError := 'Место хранения не найдено.';
@@ -1892,7 +1926,8 @@ end;
 function TLibraryDB.DeleteLocation(ALoc: TLocation; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ALoc = nil then
   begin
     AError := 'Место хранения не найдено.';
@@ -1917,7 +1952,8 @@ end;
 function TLibraryDB.RestoreLocation(ALoc: TLocation; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ALoc = nil then Exit;
   ALoc.Deleted := False;
   ALoc.DeletedAt := 0;
@@ -1935,7 +1971,8 @@ var
   B: TBook;
 begin
   Result := nil;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if Trim(ATitle) = '' then
   begin
     AError := 'Укажите название книги.';
@@ -1979,7 +2016,8 @@ var
   L: TLocation;
 begin
   Result := nil;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if Trim(ATitle) = '' then
   begin
     AError := 'Укажите название книги.';
@@ -2042,7 +2080,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ABook = nil then
   begin
     AError := 'Книга не найдена.';
@@ -2077,7 +2116,8 @@ end;
 function TLibraryDB.DeleteBook(ABook: TBook; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ABook = nil then Exit;
   if BookHasLoanedCopies(ABook.ID) then
   begin
@@ -2097,7 +2137,8 @@ end;
 function TLibraryDB.RestoreBook(ABook: TBook; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ABook = nil then Exit;
   ABook.Deleted := False;
   ABook.DeletedAt := 0;
@@ -2116,7 +2157,8 @@ var
   L: TLocation;
 begin
   Result := nil;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   B := FindBook(ABookID);
   if (B = nil) or B.Deleted then
   begin
@@ -2161,7 +2203,8 @@ var
   L: TLocation;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACopy = nil then Exit;
   if Trim(AInv) = '' then
   begin
@@ -2195,7 +2238,8 @@ end;
 function TLibraryDB.DeleteCopy(ACopy: TCopy; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACopy = nil then Exit;
   if ACopy.Status = csLoaned then
   begin
@@ -2215,7 +2259,8 @@ end;
 function TLibraryDB.RestoreCopy(ACopy: TCopy; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ACopy = nil then Exit;
   if FindCopyByInventory(ACopy.InventoryNo, ACopy.ID) <> nil then
   begin
@@ -2267,7 +2312,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if AReader = nil then Exit;
   if Trim(AName) = '' then
   begin
@@ -2292,7 +2338,8 @@ end;
 function TLibraryDB.DeleteReader(AReader: TReader; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if AReader = nil then Exit;
   if ReaderActiveLoans(AReader.ID) > 0 then
   begin
@@ -2312,7 +2359,8 @@ end;
 function TLibraryDB.RestoreReader(AReader: TReader; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if AReader = nil then Exit;
   AReader.Deleted := False;
   AReader.DeletedAt := 0;
@@ -2448,7 +2496,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if (ALoan = nil) or (ALoan.State <> lsLoaned) then
   begin
     AError := 'Выдача не найдена или уже закрыта.';
@@ -2483,7 +2532,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if (ALoan = nil) or ALoan.Deleted then
   begin
     AError := 'Выдача не найдена.';
@@ -2530,7 +2580,8 @@ var
   Before: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if (ALoan = nil) or ALoan.Deleted then
   begin
     AError := 'Выдача не найдена.';
@@ -2677,7 +2728,8 @@ end;
 function TLibraryDB.RestoreUser(AUser: TUser; out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if AUser = nil then Exit;
   AUser.Deleted := False;
   AUser.DeletedAt := 0;
@@ -2703,7 +2755,8 @@ var
 begin
   Result := False;
   ASavedCount := 0;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if (AItems = nil) or (AItems.Count = 0) then
   begin
     AError := 'Нет строк для сохранения.';
@@ -2819,7 +2872,8 @@ function TLibraryDB.UpdateSettings(const ALibName: string; ALoanDays, AMaxBooks,
   out AError: string): Boolean;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   if ALoanDays < 1 then
   begin
     AError := 'Срок выдачи должен быть не меньше 1 дня.';
@@ -3041,6 +3095,15 @@ begin
 end;
 
 function TLibraryDB.CreateBackup(out APath, AError: string): Boolean;
+begin
+  Result := False;
+  APath := '';
+  if not RequireFullAccess(AError) then
+    Exit;
+  Result := CreateBackupInternal(APath, AError);
+end;
+
+function TLibraryDB.CreateBackupInternal(out APath, AError: string): Boolean;
 var
   Name, BaseName, Dest, DestData, Manifest, Root: string;
   SL: TStringList;
@@ -3147,7 +3210,8 @@ var
   CopyErr: string;
 begin
   Result := False;
-  AError := '';
+  if not RequireFullAccess(AError) then
+    Exit;
   Root := IncludeTrailingPathDelimiter(ABackupDir);
   if not IsFullBackup(Root, AError) then
     Exit;
@@ -3250,7 +3314,7 @@ begin
     Exit;
   if (FSettings.LastBackupAt > 0) and (DaysBetween(Now, FSettings.LastBackupAt) < BACKUP_INTERVAL_DAYS) then
     Exit;
-  Result := CreateBackup(APath, AError);
+  Result := CreateBackupInternal(APath, AError);
 end;
 
 procedure TLibraryDB.SearchBooks(const ATitleQuery: string;

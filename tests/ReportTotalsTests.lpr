@@ -173,6 +173,27 @@ begin
     F.ReportParametersChange(nil);
     F.btnReportShowClick(nil);
     Check(not Footer.Visible, 'смена на обычный каталог убирает подвал');
+
+    F.cbReport.ItemIndex := F.cbReport.Items.IndexOf('Электронный формуляр');
+    F.ReportParametersChange(F.cbReport);
+    Check(F.cbReportReader.Visible and (F.cbReportReader.Items.Count = 1),
+      'формуляр заполняет список читателей');
+    F.cbReportReader.ItemIndex := 0;
+    F.ReportReaderChange(F.cbReportReader);
+    F.btnReportShowClick(nil);
+    Check((F.gridReport.RowCount = 3) and F.btnReportSave.Enabled, 'формуляр выводит две выдачи и разрешает CSV');
+
+    F.cbReport.ItemIndex := F.cbReport.Items.IndexOf('Итоговый отчёт за период');
+    F.ReportParametersChange(F.cbReport);
+    Check(F.chkReportDetailed.Visible and not F.chkReportDetailed.Checked,
+      'итоговый отчёт по умолчанию краткий');
+    F.btnReportShowClick(nil);
+    Check((F.gridReport.RowCount = 4) and (F.gridReport.Cells[2, 1] = 'Итого читателей') and
+      (F.gridReport.Cells[3, 1] = '1'), 'краткий отчёт показывает количество уникальных читателей');
+    F.chkReportDetailed.Checked := True;
+    F.ReportDetailChange(F.chkReportDetailed);
+    Check((F.gridReport.RowCount = 8) and (F.gridReport.Cells[2, 7] = 'Итого на руках книг') and
+      (F.gridReport.Cells[3, 7] = '2'), 'флажок показывает подробный отчёт и остаток');
   finally
     if F <> nil then
     begin

@@ -25,9 +25,10 @@ end;
 
 procedure CheckContent;
 const
-  Reports: array[0..9] of string = ('report-catalog', 'report-copies',
+  Reports: array[0..11] of string = ('report-catalog', 'report-copies',
     'report-available', 'report-free-numbers', 'report-on-hands', 'report-overdue',
-    'report-history', 'report-readers', 'report-journal', 'report-statistics');
+    'report-history', 'report-readers', 'report-journal', 'report-statistics',
+    'report-reader-history', 'report-period-totals');
   Sections: array[0..12] of string = ('start', 'books', 'copies', 'search', 'ai',
     'readers', 'loans', 'overdue', 'directories', 'reports', 'tables', 'service',
     'quick-help');

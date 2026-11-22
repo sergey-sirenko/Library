@@ -2,7 +2,7 @@ program LoanStatisticsTests;
 
 {$mode objfpc}{$H+}
 
-uses Classes, SysUtils, DateUtils, uDatabase, uEntities, uTypes, uReports;
+uses Classes, SysUtils, DateUtils, uDatabase, uEntities, uTypes, uReports, uReportTotals;
 
 var Checks: Integer;
 
@@ -171,8 +171,9 @@ begin
 end;
 
 procedure TestDistinctBooks;
-var DB: TLibraryDB; Reports: TReportService; Lines: TStringList;
-  Summary: TLoanStatisticsSummary; Day: TDateTime;
+var DB: TLibraryDB; Reports: TReportService; Lines, Exported: TStringList;
+  Summary: TLoanStatisticsSummary; Totals: TReportTotals; Day: TDateTime;
+  ByCategory: Boolean; ReaderColumn, Row: Integer;
 begin
   DB := TLibraryDB.Create;
   Reports := TReportService.Create(DB);
@@ -186,15 +187,187 @@ begin
     CopyOf(DB, 2, 2);
     Loan(DB, 1, 1, Day);
     Loan(DB, 2, 1, Day);
-    Lines := Reports.LoansStatistics(Day, Day, False, Summary);
-    try Check((Lines.Count = 3) and (Summary.Books = 2), 'одинаковые названия не объединяют разные ID книг');
-    finally Lines.Free; end;
-    Lines := Reports.LoansStatistics(Day, Day, True, Summary);
-    try
-      Check(Lines.Count = 3, 'одноимённые категории с разными ID разделены');
-      Check(Summary.Readers = 1, 'общий итог читателей не равен сумме по категориям');
-    finally Lines.Free; end;
+    for ByCategory := False to True do
+    begin
+      Lines := Reports.LoansStatistics(Day, Day, ByCategory, Summary);
+      try
+        Check((Lines.Count = 3) and (Summary.Books = 2), 'одинаковые названия не объединяют разные ID');
+        Check(Summary.Readers = 1, 'один читатель учтён в общем итоге один раз');
+        Lines[0] := '№ п/п;' + Lines[0];
+        for Row := 1 to Lines.Count - 1 do
+          Lines[Row] := IntToStr(Row) + ';' + Lines[Row];
+        if ByCategory then
+          ReaderColumn := 4
+        else
+          ReaderColumn := 5;
+        Check((Field(Lines, 1, ReaderColumn) = '1') and (Field(Lines, 2, ReaderColumn) = '1'),
+          'читатель учтён в каждой из двух групп');
+        Totals := CalculateReportTotals(Lines, Summary.Readers);
+        Check((Totals.Caption = 'Итого') and (Totals.Cells[ReaderColumn] = '1') and
+          (Totals.Cells[ReaderColumn - 1] = '2'), 'в подвале уникальные читатели и сумма соседней колонки');
+        Exported := ReportWithTotals(Lines, Summary.Readers);
+        try
+          Check((Field(Exported, 3, 0) = 'Итого') and (Field(Exported, 3, ReaderColumn) = '1'),
+            'в итоговой строке CSV один читатель');
+        finally
+          Exported.Free;
+        end;
+      finally
+        Lines.Free;
+      end;
+    end;
   finally Reports.Free; DB.Free; end;
+end;
+
+procedure TestReaderHistory;
+var
+  DB: TLibraryDB;
+  Reports: TReportService;
+  Reader: TReader;
+  Returned: TLoan;
+  Lines, Exported: TStringList;
+  Day: TDateTime;
+begin
+  DB := TLibraryDB.Create;
+  Reports := TReportService.Create(DB);
+  Reader := TReader.Create;
+  try
+    Reader.ID := 9000000000;
+    Reader.FullName := 'Тестовый; читатель';
+    Day := EncodeDate(2026, 1, 31);
+    Category(DB, 1, 'Категория; раздел');
+    Book(DB, 1, 1, 'Первая книга');
+    Book(DB, 2, 0, 'Вторая книга');
+    CopyOf(DB, 1, 1).InventoryNo := '001';
+    CopyOf(DB, 2, 2).InventoryNo := '002';
+    Loan(DB, 1, Reader.ID, Day).DueAt := Day + 14;
+    Returned := Loan(DB, 2, Reader.ID, Day + 1);
+    Returned.State := lsReturned;
+    Returned.DueAt := Day + 15;
+    Returned.ReturnedAt := Day + 3;
+    Loan(DB, 1, 1, Day);
+    Loan(DB, 2, Reader.ID, Day).Deleted := True;
+    Loan(DB, 999, Reader.ID, Day);
+    Lines := Reports.ReaderHistory(Reader);
+    try
+      Check(Lines.Count = 4, 'формуляр выбирает только неудалённые выдачи читателя');
+      Check((Field(Lines, 1, 0) = FormatDateTimeRu(Day)) and
+        (Field(Lines, 1, 2) = 'Первая книга') and (Field(Lines, 1, 3) = 'Категория; раздел'),
+        'дата выдачи, название и категория с разделителем');
+      Check((Field(Lines, 1, 5) = FormatDateRu(Day + 14)) and (Field(Lines, 1, 6) = ''),
+        'у открытой выдачи есть срок возврата');
+      Check((Field(Lines, 2, 3) = '') and (Field(Lines, 2, 5) = '') and
+        (Field(Lines, 2, 6) = FormatDateTimeRu(Day + 3)), 'у завершённой выдачи есть фактическая дата');
+      Check(Field(Lines, 3, 2) = '', 'утраченная связь с экземпляром оставляет название пустым');
+      Exported := Reports.ReaderHistoryExport(Lines, Reader);
+      try
+        Check((Field(Exported, 1, 1) = Reader.FullName) and
+          (Field(Exported, 1, 3) = IntToStr(Reader.ID)), 'CSV идентифицирует читателя');
+        Check(Exported[Exported.Count - 1] = Lines[Lines.Count - 1], 'CSV сохраняет выдачи');
+      finally
+        Exported.Free;
+      end;
+    finally
+      Lines.Free;
+    end;
+  finally
+    Reader.Free;
+    Reports.Free;
+    DB.Free;
+  end;
+end;
+
+procedure TestPeriodTotals;
+var
+  DB: TLibraryDB;
+  Reports: TReportService;
+  Lines, Detailed, Exported: TStringList;
+  Reader: TReader;
+  Entry: TLoan;
+  Day: TDateTime;
+  I: Integer;
+begin
+  DB := TLibraryDB.Create;
+  Reports := TReportService.Create(DB);
+  try
+    Day := EncodeDate(2026, 1, 31);
+    for I := 1 to 3 do
+    begin
+      Reader := TReader.Create;
+      Reader.ID := I;
+      Reader.RegisteredAt := Day;
+      if I = 2 then
+        Reader.RegisteredAt := Day - 1;
+      DB.Readers.Add(Reader);
+    end;
+    Category(DB, 1, 'Книги; раздел');
+    Book(DB, 1, 1, 'Первая книга');
+    Book(DB, 2, 0, 'Вторая книга');
+    for I := 1 to 9 do
+      CopyOf(DB, I, 1);
+    DB.FindCopy(3).BookID := 2;
+
+    Entry := Loan(DB, 1, 1, Day);
+    Entry.State := lsReturned;
+    Entry.ReturnedAt := Day + 0.5;
+    Entry.RenewCount := 4;
+    Entry := Loan(DB, 2, 1, Day + 1 + EncodeTime(23, 59, 59, 999));
+    Entry.State := lsReturned;
+    Entry.ReturnedAt := Day + 2;
+    Loan(DB, 3, 2, Day + 1);
+    Entry := Loan(DB, 4, 2, Day - 1);
+    Entry.State := lsReturned;
+    Entry.ReturnedAt := Day;
+    Loan(DB, 5, 2, Day - 1);
+    Loan(DB, 6, 3, Day + 2);
+    Loan(DB, 7, 3, Day).Deleted := True;
+    Entry := Loan(DB, 8, 2, Day - 3);
+    Entry.State := lsReturned;
+    Entry.ReturnedAt := Day - 1;
+    Loan(DB, 9, 2, Day - 2).State := lsLost;
+
+    Lines := Reports.PeriodTotals(Day, Day + 1, False);
+    try
+      Check(Lines.Count = 4, 'краткий отчёт содержит три показателя');
+      Check(Lines[1] = 'Итого читателей;2', 'читатель с несколькими выдачами учитывается один раз');
+      Check(Lines[2] = 'Из них новых;1', 'только получившие книгу новые читатели');
+      Check(Lines[3] = 'Итого выдано книг;3', 'выдачи по границам, без продлений и удалённых выдач');
+      Detailed := Reports.PeriodTotals(Day, Day + 1, True);
+      try
+        for I := 0 to Lines.Count - 1 do
+          Check(Detailed[I] = Lines[I], 'подробный режим сохраняет общие итоги');
+        Check(Detailed.Count = 9, 'разбивка по двум категориям, возвраты и остаток');
+        Check((Trim(Field(Detailed, 5, 0)) = 'Без категории') and
+          (Field(Detailed, 5, 1) = '1'), 'выдача книги без категории входит в разбивку');
+        Check((Trim(Field(Detailed, 6, 0)) = 'Книги; раздел') and
+          (Field(Detailed, 6, 1) = '2'), 'категория с разделителем и две выдачи');
+        Check(Detailed[7] = 'Итого возвращено книг;2', 'возврат до полуночи, включая более раннюю выдачу');
+        Check(Detailed[8] = 'Итого на руках книг;3', 'остаток включает раннюю выдачу и возврат после периода');
+        Exported := Reports.PeriodTotalsExport(Detailed, Day, Day + 1);
+        try
+          Check(Exported[1] = 'Период с;31.01.2026;по;01.02.2026', 'CSV содержит период');
+          Check(Exported[Exported.Count - 1] = Detailed[8], 'CSV сохраняет итог на руках');
+        finally
+          Exported.Free;
+        end;
+      finally
+        Detailed.Free;
+      end;
+    finally
+      Lines.Free;
+    end;
+
+    Lines := Reports.PeriodTotals(Day + 3, Day + 3, True);
+    try
+      Check(Lines[3] = 'Итого выдано книг;0', 'период без выдач');
+      Check(Lines[Lines.Count - 1] = 'Итого на руках книг;3', 'остаток доступен в периоде без выдач');
+    finally
+      Lines.Free;
+    end;
+  finally
+    Reports.Free;
+    DB.Free;
+  end;
 end;
 
 begin
@@ -202,6 +375,8 @@ begin
   try
     TestStatistics;
     TestDistinctBooks;
+    TestReaderHistory;
+    TestPeriodTotals;
     WriteLn('OK: ', Checks, ' checks');
   except
     on E: Exception do

@@ -29,7 +29,10 @@ type
       out ASummary: TLoanStatisticsSummary): TStringList;
     function LoansStatisticsExport(ALines: TStrings; AFrom, ATo: TDateTime;
       AByCategory: Boolean; const ASummary: TLoanStatisticsSummary): TStringList;
+    function PeriodTotals(AFrom, ATo: TDateTime; ADetailed: Boolean): TStringList;
+    function PeriodTotalsExport(ALines: TStrings; AFrom, ATo: TDateTime): TStringList;
     function ReaderHistory(AReader: TReader): TStringList;
+    function ReaderHistoryExport(ALines: TStrings; AReader: TReader): TStringList;
     function ReadersList: TStringList;
     function ActionsLog(AFrom, ATo: TDateTime): TStringList;
     procedure ExportToFile(ALines: TStrings; const AFile: string);
@@ -38,9 +41,11 @@ type
 implementation
 
 uses
-  StrUtils, DateUtils, LazUTF8, Math;
+  StrUtils, DateUtils, LazUTF8, Math, fgl;
 
 type
+  TCategoryIssueCounts = specialize TFPGMap<TId, Integer>;
+
   TLoanStatisticsGroup = class
     ID: TId;
     Title, Authors, Category: string;
@@ -85,6 +90,16 @@ begin
   if A.ID > B.ID then Exit(1);
 end;
 
+procedure NormalizeReportPeriod(var AFrom, ATo: TDateTime);
+begin
+  if IsNan(AFrom) or IsInfinite(AFrom) or IsNan(ATo) or IsInfinite(ATo) or
+    (AFrom < 1) or (ATo < 1) or (AFrom > 2958465) or (ATo > 2958465) then
+    raise Exception.Create('Укажите корректные даты периода.');
+  AFrom := DateOf(AFrom);
+  ATo := DateOf(ATo);
+  if AFrom > ATo then raise Exception.Create('Дата начала периода позже даты окончания.');
+end;
+
 function TReportService.LoansStatistics(AFrom, ATo: TDateTime; AByCategory: Boolean;
   out ASummary: TLoanStatisticsSummary): TStringList;
 var Groups: TObjectList; Index, Books, Readers: TStringList;
@@ -92,12 +107,7 @@ var Groups: TObjectList; Index, Books, Readers: TStringList;
   Loan: TLoan; Copy: TCopy; Book: TBook; Category: TCategory;
 begin
   ASummary := Default(TLoanStatisticsSummary);
-  if IsNan(AFrom) or IsInfinite(AFrom) or IsNan(ATo) or IsInfinite(ATo) or
-    (AFrom < 1) or (ATo < 1) or (AFrom > 2958465) or (ATo > 2958465) then
-    raise Exception.Create('Укажите корректные даты периода.');
-  AFrom := DateOf(AFrom);
-  ATo := DateOf(ATo);
-  if AFrom > ATo then raise Exception.Create('Дата начала периода позже даты окончания.');
+  NormalizeReportPeriod(AFrom, ATo);
   Groups := TObjectList.Create(True);
   Index := TStringList.Create;
   Index.Sorted := True;
@@ -197,6 +207,127 @@ begin
   Result.AddStrings(ALines);
 end;
 
+function TReportService.PeriodTotals(AFrom, ATo: TDateTime; ADetailed: Boolean): TStringList;
+var
+  DayAfter: TDateTime;
+  ReaderIDs, CopiesOnHands: TStringList;
+  CategoryCounts: TCategoryIssueCounts;
+  I, Index, Issued, Returned, NewReaders: Integer;
+  CategoryID: TId;
+  Loan: TLoan;
+  Reader: TReader;
+  Copy: TCopy;
+  Book: TBook;
+  Category: TCategory;
+  CategoryName: string;
+begin
+  NormalizeReportPeriod(AFrom, ATo);
+  DayAfter := ATo + 1;
+  ReaderIDs := NewIDSet;
+  CopiesOnHands := nil;
+  CategoryCounts := nil;
+  try
+    if ADetailed then
+    begin
+      CopiesOnHands := NewIDSet;
+      CategoryCounts := TCategoryIssueCounts.Create;
+      CategoryCounts.Sorted := True;
+    end;
+    Issued := 0;
+    Returned := 0;
+    NewReaders := 0;
+    for I := 0 to FDB.Loans.Count - 1 do
+    begin
+      Loan := TLoan(FDB.Loans[I]);
+      if Loan.Deleted or (Loan.IssuedAt < 1) or (Loan.IssuedAt >= DayAfter) then
+        Continue;
+      if ADetailed then
+      begin
+        if (Loan.State = lsReturned) and (Loan.ReturnedAt >= AFrom) and
+          (Loan.ReturnedAt < DayAfter) and (Loan.ReturnedAt >= Loan.IssuedAt) then
+          Inc(Returned);
+        if (Loan.CopyID > 0) and (Loan.State <> lsLost) and
+          ((Loan.ReturnedAt >= DayAfter) or ((Loan.State = lsLoaned) and (Loan.ReturnedAt = 0))) then
+          CopiesOnHands.Add(IntToStr(Loan.CopyID));
+      end;
+      if Loan.IssuedAt < AFrom then
+        Continue;
+
+      Inc(Issued);
+      if Loan.ReaderID > 0 then
+        ReaderIDs.Add(IntToStr(Loan.ReaderID));
+      if ADetailed then
+      begin
+        CategoryID := 0;
+        Copy := FDB.FindCopy(Loan.CopyID);
+        if Copy <> nil then
+        begin
+          Book := FDB.FindBook(Copy.BookID);
+          if (Book <> nil) and (FDB.FindCategory(Book.CategoryID) <> nil) then
+            CategoryID := Book.CategoryID;
+        end;
+        Index := CategoryCounts.IndexOf(CategoryID);
+        if Index < 0 then
+          CategoryCounts.Add(CategoryID, 1)
+        else
+          CategoryCounts.Data[Index] := CategoryCounts.Data[Index] + 1;
+      end;
+    end;
+
+    for I := 0 to FDB.Readers.Count - 1 do
+    begin
+      Reader := TReader(FDB.Readers[I]);
+      if (Reader.RegisteredAt >= AFrom) and (Reader.RegisteredAt < DayAfter) and
+        (ReaderIDs.IndexOf(IntToStr(Reader.ID)) >= 0) then
+        Inc(NewReaders);
+    end;
+
+    Result := TStringList.Create;
+    try
+      Result.Add('Показатель;Количество');
+      Result.Add('Итого читателей;' + IntToStr(ReaderIDs.Count));
+      Result.Add('Из них новых;' + IntToStr(NewReaders));
+      Result.Add('Итого выдано книг;' + IntToStr(Issued));
+      if ADetailed then
+      begin
+        Result.Add('Из них по категориям;');
+        for I := 0 to CategoryCounts.Count - 1 do
+        begin
+          Category := FDB.FindCategory(CategoryCounts.Keys[I]);
+          if Category <> nil then
+            CategoryName := Category.Name
+          else
+            CategoryName := 'Без категории';
+          Result.Add(CsvEscape('    ' + CategoryName) + ';' + IntToStr(CategoryCounts.Data[I]));
+        end;
+        Result.Add('Итого возвращено книг;' + IntToStr(Returned));
+        Result.Add('Итого на руках книг;' + IntToStr(CopiesOnHands.Count));
+      end;
+    except
+      Result.Free;
+      raise;
+    end;
+  finally
+    CategoryCounts.Free;
+    CopiesOnHands.Free;
+    ReaderIDs.Free;
+  end;
+end;
+
+function TReportService.PeriodTotalsExport(ALines: TStrings; AFrom, ATo: TDateTime): TStringList;
+begin
+  Result := TStringList.Create;
+  try
+    Result.Add('Итоговый отчёт за период');
+    Result.Add('Период с;' + FormatDateRu(DateOf(AFrom)) + ';по;' + FormatDateRu(DateOf(ATo)));
+    Result.Add('');
+    Result.AddStrings(ALines);
+  except
+    Result.Free;
+    raise;
+  end;
+end;
+
 constructor TReportService.Create(ADB: TLibraryDB);
 begin
   inherited Create;
@@ -245,21 +376,30 @@ var
   C: TCopy;
   B: TBook;
   L: TLocation;
-  Title, LocationName: string;
+  Category: TCategory;
+  Title, LocationName, CategoryName: string;
 begin
   Result := TStringList.Create;
-  Result.Add('Инв.№;Книга;Статус;Место;Состояние');
+  Result.Add('Инв.№;Книга;Статус;Место;Состояние;Категория');
   for I := 0 to FDB.Copies.Count - 1 do
   begin
     C := TCopy(FDB.Copies[I]);
     if C.Deleted then Continue;
+    Title := '';
+    CategoryName := '';
     B := FDB.FindBook(C.BookID);
-    if B <> nil then Title := B.Title else Title := '';
+    if B <> nil then
+    begin
+      Title := B.Title;
+      Category := FDB.FindCategory(B.CategoryID);
+      if Category <> nil then
+        CategoryName := Category.Name;
+    end;
     L := FDB.FindLocation(C.LocationID);
     if L <> nil then LocationName := L.Name else LocationName := '';
-    Result.Add(Format('%s;%s;%s;%s;%s',
+    Result.Add(Format('%s;%s;%s;%s;%s;%s',
       [CsvEscape(C.InventoryNo), CsvEscape(Title), CsvEscape(CopyStatusToStr(C.Status)),
-       CsvEscape(LocationName), CsvEscape(C.Condition)]));
+       CsvEscape(LocationName), CsvEscape(C.Condition), CsvEscape(CategoryName)]));
   end;
 end;
 
@@ -459,22 +599,53 @@ var
   L: TLoan;
   C: TCopy;
   B: TBook;
+  Category: TCategory;
+  InventoryNo, Title, CategoryName, DueDate: string;
 begin
   Result := TStringList.Create;
-  Result.Add('Дата;Инв.№;Книга;Состояние;Срок;Возврат');
+  Result.Add('Дата выдачи;Инв.№;Книга;Категория;Состояние;Срок возврата;Дата возврата');
   if AReader = nil then Exit;
   for I := 0 to FDB.Loans.Count - 1 do
   begin
     L := TLoan(FDB.Loans[I]);
     if L.Deleted or (L.ReaderID <> AReader.ID) then Continue;
+    InventoryNo := '';
+    Title := '';
+    CategoryName := '';
+    DueDate := '';
     C := FDB.FindCopy(L.CopyID);
-    B := nil;
-    if C <> nil then B := FDB.FindBook(C.BookID);
-    Result.Add(Format('%s;%s;%s;%s;%s;%s',
-      [FormatDateTimeRu(L.IssuedAt),
-       CsvEscape(IfThen(C <> nil, C.InventoryNo, '')),
-       CsvEscape(IfThen(B <> nil, B.Title, '')),
-       LoanStateToStr(L.State), FormatDateRu(L.DueAt), FormatDateTimeRu(L.ReturnedAt)]));
+    if C <> nil then
+    begin
+      InventoryNo := C.InventoryNo;
+      B := FDB.FindBook(C.BookID);
+      if B <> nil then
+      begin
+        Title := B.Title;
+        Category := FDB.FindCategory(B.CategoryID);
+        if Category <> nil then
+          CategoryName := Category.Name;
+      end;
+    end;
+    if L.State = lsLoaned then
+      DueDate := FormatDateRu(L.DueAt);
+    Result.Add(Format('%s;%s;%s;%s;%s;%s;%s',
+      [FormatDateTimeRu(L.IssuedAt), CsvEscape(InventoryNo), CsvEscape(Title),
+       CsvEscape(CategoryName), LoanStateToStr(L.State), DueDate, FormatDateTimeRu(L.ReturnedAt)]));
+  end;
+end;
+
+function TReportService.ReaderHistoryExport(ALines: TStrings; AReader: TReader): TStringList;
+begin
+  Result := TStringList.Create;
+  try
+    Result.Add('Электронный формуляр');
+    if AReader <> nil then
+      Result.Add('Читатель;' + CsvEscape(AReader.FullName) + ';ID;' + IntToStr(AReader.ID));
+    Result.Add('');
+    Result.AddStrings(ALines);
+  except
+    Result.Free;
+    raise;
   end;
 end;
 

@@ -6,14 +6,20 @@ interface
 
 uses Classes, SysUtils;
 
+const
+  NO_UNIQUE_READER_TOTAL = -1;
+
 type
   TReportTotals = record
     HasTotals: Boolean;
+    Caption: string;
     Cells: array of string;
   end;
 
-function CalculateReportTotals(ALines: TStrings): TReportTotals;
-function ReportWithTotals(ALines: TStrings): TStringList;
+function CalculateReportTotals(ALines: TStrings;
+  AUniqueReaders: Integer = NO_UNIQUE_READER_TOTAL): TReportTotals;
+function ReportWithTotals(ALines: TStrings;
+  AUniqueReaders: Integer = NO_UNIQUE_READER_TOTAL): TStringList;
 
 implementation
 
@@ -32,11 +38,12 @@ begin
   Result.QuoteChar := '"';
 end;
 
-function CalculateReportTotals(ALines: TStrings): TReportTotals;
+function CalculateReportTotals(ALines: TStrings; AUniqueReaders: Integer): TReportTotals;
 var Headers, Parts: TStringList; C, R: Integer;
   Sum, Value: Int64; Bad, Overflow: Boolean;
 begin
   Result.HasTotals := False;
+  Result.Caption := 'Сумма по строкам';
   Result.Cells := nil;
   if (ALines = nil) or (ALines.Count = 0) then Exit;
   Headers := CSVParts;
@@ -48,6 +55,12 @@ begin
     begin
       if not Summable(Headers[C]) then Continue;
       Result.HasTotals := True;
+      if (Headers[C] = 'Читателей') and (AUniqueReaders >= 0) then
+      begin
+        Result.Caption := 'Итого';
+        Result.Cells[C] := IntToStr(AUniqueReaders);
+        Continue;
+      end;
       Sum := 0;
       Bad := False;
       Overflow := False;
@@ -78,19 +91,19 @@ begin
   end;
 end;
 
-function ReportWithTotals(ALines: TStrings): TStringList;
+function ReportWithTotals(ALines: TStrings; AUniqueReaders: Integer): TStringList;
 var Totals: TReportTotals; Parts: TStringList; C: Integer;
 begin
   Result := TStringList.Create;
   try
     if ALines <> nil then Result.Assign(ALines);
-    Totals := CalculateReportTotals(ALines);
+    Totals := CalculateReportTotals(ALines, AUniqueReaders);
     if not Totals.HasTotals then Exit;
     Parts := CSVParts;
     try
       for C := 0 to High(Totals.Cells) do Parts.Add(Totals.Cells[C]);
       // В отчётах первая колонка — номер строки, его сумма не вычисляется.
-      if Parts.Count > 0 then Parts[0] := 'Сумма по строкам';
+      if Parts.Count > 0 then Parts[0] := Totals.Caption;
       Result.Add(Parts.DelimitedText);
     finally
       Parts.Free;

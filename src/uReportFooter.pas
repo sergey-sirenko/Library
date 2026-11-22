@@ -17,7 +17,7 @@ type
     procedure Notification(AComponent: TComponent; Operation: TOperation); override;
   public
     constructor Create(AOwner: TComponent; ASource: TLibraryGrid); reintroduce;
-    procedure UpdateTotals(ALines: TStrings);
+    procedure UpdateTotals(ALines: TStrings; AUniqueReaders: Integer = NO_UNIQUE_READER_TOTAL);
     function ColumnBounds(ALogicalColumn: Integer): TRect;
   end;
 
@@ -41,9 +41,9 @@ begin
   if (Operation = opRemove) and (AComponent = FSource) then FSource := nil;
 end;
 
-procedure TReportFooter.UpdateTotals(ALines: TStrings);
+procedure TReportFooter.UpdateTotals(ALines: TStrings; AUniqueReaders: Integer);
 begin
-  FTotals := CalculateReportTotals(ALines);
+  FTotals := CalculateReportTotals(ALines, AUniqueReaders);
   Canvas.Font.Assign(Font);
   Canvas.Font.Style := Canvas.Font.Style + [fsBold];
   Height := Canvas.TextHeight('Ag') * 2 + 16;
@@ -71,7 +71,7 @@ begin
   Canvas.Font.Style := Canvas.Font.Style + [fsBold];
   Canvas.Pen.Color := clBtnShadow;
   Canvas.Line(0, 0, ClientWidth, 0);
-  Canvas.TextOut(8, 4, 'Сумма по строкам');
+  Canvas.TextOut(8, 4, FTotals.Caption);
   if FSource = nil then Exit;
   RightEdge := Min(ClientWidth, FSource.ClientWidth);
   Style := Canvas.TextStyle;

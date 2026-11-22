@@ -6,7 +6,7 @@ interface
 
 const
   APP_NAME = 'Библиотека';
-  APP_VERSION = '1.9.0';
+  APP_VERSION = '1.10.0';
   DATA_SIGNATURE = 'LIBRA001';
   INDEX_SIGNATURE = 'LIBRAIDX';
   FORMAT_VERSION = 3;
@@ -30,7 +30,7 @@ function ApplicationWindowTitle(const ALibraryName: string): string;
 function ClampUIFontSize(ASize: Integer): Integer;
 
 type
-  TUserRole = (urLibrarian, urAdmin);
+  TUserRole = (urLibrarian, urAdmin, urReadOnly);
 
   TCopyStatus = (csAvailable, csLoaned, csLost, csWrittenOff);
 
@@ -101,6 +101,7 @@ function RoleToStr(ARole: TUserRole): string;
 begin
   case ARole of
     urAdmin: Result := 'admin';
+    urReadOnly: Result := 'Только чтение';
   else
     Result := 'librarian';
   end;
@@ -110,6 +111,8 @@ function StrToRole(const S: string): TUserRole;
 begin
   if SameText(S, 'admin') then
     Result := urAdmin
+  else if SameText(S, RoleToStr(urReadOnly)) then
+    Result := urReadOnly
   else
     Result := urLibrarian;
 end;

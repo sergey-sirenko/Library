@@ -16,7 +16,7 @@ type
   private
     FGrid: TLibraryGrid;
     FFirstCol, FColumn: Integer;
-    FDescending, FSorting: Boolean;
+    FDescending, FSorting, FDisabled: Boolean;
     FSchema: string;
     FAfterSort: TNotifyEvent;
     FKey: TGridSortKeyEvent;
@@ -30,6 +30,7 @@ type
     procedure Apply;
     procedure ClickColumn(AColumn: Integer);
     procedure SortBy(AColumn: Integer; ADescending: Boolean);
+    property Disabled: Boolean read FDisabled write FDisabled;
     property OnKey: TGridSortKeyEvent read FKey write FKey;
     property Column: Integer read FColumn;
     property Descending: Boolean read FDescending;
@@ -183,7 +184,7 @@ end;
 
 procedure TGridSorting.ClickColumn(AColumn: Integer);
 begin
-  if FSorting then Exit;
+  if FDisabled or FSorting then Exit;
   if (AColumn < FFirstCol) or (AColumn >= FGrid.ColCount) or
     (FGrid.FixedRows = 0) or (PlainCaption(FGrid.Cells[AColumn, 0]) = '') then Exit;
   { Сначала завершаем ввод на прежней записи, до перемещения строк. }
@@ -212,6 +213,7 @@ end;
 
 procedure TGridSorting.SortBy(AColumn: Integer; ADescending: Boolean);
 begin
+  if FDisabled then Exit;
   Apply;
   if (AColumn < FFirstCol) or (AColumn >= FGrid.ColCount) then Exit;
   FColumn := AColumn;
@@ -268,7 +270,7 @@ var
   end;
 
 begin
-  if FSorting or (FGrid.FixedRows = 0) then Exit;
+  if FDisabled or FSorting or (FGrid.FixedRows = 0) then Exit;
   Schema := '';
   for C := FFirstCol to FGrid.ColCount - 1 do
     Schema := Schema + PlainCaption(FGrid.Cells[C, 0]) + #9;
